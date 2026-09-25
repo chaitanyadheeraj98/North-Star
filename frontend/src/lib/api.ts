@@ -8,6 +8,7 @@
 
 import type {
   Analytics,
+  ModelUpdateResult,
   PiModelOption,
   HandoffResponse,
   HistoryResponse,
@@ -105,8 +106,8 @@ export const api = {
       }),
     }),
 
-  handoff: (id: string) =>
-    request<HandoffResponse>(`/api/tasks/${encodeURIComponent(id)}/handoff`),
+  handoff: (id: string, provider: string) =>
+    request<HandoffResponse>(`/api/tasks/${encodeURIComponent(id)}/handoff?provider=${encodeURIComponent(provider)}`),
 
   importResult: (receipt: string) =>
     request<ImportResultResponse>('/api/results/import', {
@@ -136,6 +137,9 @@ export const api = {
   piStatus: () => request<Record<string, unknown>>('/api/pi/status'),
 
   piModels: () => request<{ models: PiModelOption[] }>('/api/pi/models'),
+
+  updateModels: () =>
+    request<ModelUpdateResult>('/api/models/update', { method: 'POST' }),
 
   reloadConfig: () =>
     request<{ status: string }>('/api/models/reload', { method: 'POST' }),

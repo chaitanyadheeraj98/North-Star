@@ -26,7 +26,7 @@ CAPABILITY_DIMENSIONS: tuple[str, ...] = (
 class ModelEntry(BaseModel):
     """One routable model."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     display_name: str
     model_id: str = Field(
@@ -34,14 +34,18 @@ class ModelEntry(BaseModel):
         "user selects the right thing in Claude Code or the Codex CLI."
     )
     enabled: bool = True
-    supported_efforts: list[Effort] = Field(min_length=1)
+    supported_efforts: list[Effort]
     relative_model_burn: float = Field(gt=0.0)
     source_pricing: dict[str, float] = Field(default_factory=dict)
     capability_priors: dict[str, float]
     notes: str = ""
+    source_urls: list[str] = Field(default_factory=list)
+    review_required: bool = False
 
     @model_validator(mode="after")
     def _check_capabilities(self) -> ModelEntry:
+        if self.enabled and (not self.supported_efforts or self.review_required):
+            raise ValueError("enabled models require reviewed priors and supported efforts")
         missing = [d for d in CAPABILITY_DIMENSIONS if d not in self.capability_priors]
         if missing:
             raise ValueError(f"missing capability priors: {', '.join(missing)}")
@@ -64,8 +68,7 @@ class ProviderEntry(BaseModel):
     display_name: str
     burn_weight: float = Field(
         gt=0.0,
-        description="User-tunable exchange rate placing this subscription's quota "
-        "onto the shared comparison axis.",
+        description="Local burn scale for this provider. Providers are routed independently.",
     )
     burn_reference: str = ""
     handoff_hint: str = ""

@@ -34,3 +34,14 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Model updater recovery backups
+backend/config/models.*.yaml.bak
+backend/config/.models.yaml.*.tmp
+
+# Serena MCP tool project metadata
+.serena/
+
+# graphify knowledge-graph outputs - keep only the raw graph data
+graphify-out/*
+!graphify-out/graph.json

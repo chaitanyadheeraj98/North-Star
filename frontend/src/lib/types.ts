@@ -87,12 +87,33 @@ export type RoutingDecision = {
   reason_codes: string[];
   fallback: Configuration | null;
   fallback_display: string | null;
+  fallback_threshold_met: boolean | null;
   rejected_lighter: ConfigurationScore | null;
   rejected_stronger: ConfigurationScore | null;
   evaluated: ConfigurationScore[];
   threshold_met: boolean;
   evidence_band: EvidenceBand;
   evidence_weight: number;
+};
+
+export type RoutingRecommendations = {
+  router_version: string;
+  registry_version: string;
+  codex: RoutingDecision | null;
+  claude: RoutingDecision | null;
+  unavailable: Record<string, string>;
+  legacy: boolean;
+};
+
+export type ModelUpdateResult = {
+  status: 'updated' | 'unchanged';
+  registry_version: string;
+  added: string[];
+  changed: string[];
+  unconfirmed: string[];
+  warnings: string[];
+  sources: string[];
+  backup: string | null;
 };
 
 export type AnalyzerInfo = {
@@ -114,8 +135,8 @@ export type TaskResponse = {
   created_at: string;
   fingerprint: TaskFingerprint | null;
   analyzer: AnalyzerInfo | null;
-  recommendation: RoutingDecision | null;
-  handoff: string | null;
+  recommendation: RoutingRecommendations | null;
+  handoffs: Record<string, string>;
   execution?: Record<string, unknown> | null;
 };
 
@@ -155,6 +176,7 @@ export type HistoryRow = {
   created_at: string;
   status: string;
   recommended_display: string | null;
+  recommendations: Record<string, string>;
   actual_display: string | null;
   outcome: string | null;
   recommendation_followed: boolean | null;
@@ -278,6 +300,7 @@ export type SettingsResponse = {
       display_name: string;
       model_id: string;
       enabled: boolean;
+      review_required: boolean;
       supported_efforts: string[];
       routable_efforts: string[];
       relative_model_burn: number;

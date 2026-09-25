@@ -21,8 +21,8 @@ from .fixtures import EXPECTATIONS, by_name, fp
 
 def test_same_inputs_produce_the_same_decision(engine):
     fingerprint = by_name("deduplication identity semantics").fingerprint
-    first = engine.route(fingerprint)
-    second = engine.route(fingerprint)
+    first = engine.route(fingerprint).codex
+    second = engine.route(fingerprint).codex
 
     assert (first.provider, first.model, first.effort) == (
         second.provider,
@@ -37,14 +37,14 @@ def test_same_inputs_produce_the_same_decision(engine):
 def test_a_fresh_engine_makes_the_same_decision(config):
     """Determinism must survive process boundaries, not just repeated calls."""
     fingerprint = by_name("duplicate payments race condition").fingerprint
-    a = RoutingEngine(config.registry, config.policy, config.families).route(fingerprint)
-    b = RoutingEngine(config.registry, config.policy, config.families).route(fingerprint)
+    a = RoutingEngine(config.registry, config.policy, config.families).route(fingerprint).codex
+    b = RoutingEngine(config.registry, config.policy, config.families).route(fingerprint).codex
     assert a.model_dump(mode="json") == b.model_dump(mode="json")
 
 
 def test_evaluation_order_is_total(engine):
     """Equal-burn configurations must not reorder between runs."""
-    decision = engine.route(fp())
+    decision = engine.route(fp()).codex
     burns = [round(s.predicted_burn, 9) for s in decision.evaluated]
     assert burns == sorted(burns)
 
@@ -260,7 +260,7 @@ def test_failure_cost_scales_with_what_redoing_the_work_costs(policy):
 
 
 def test_the_cheapest_eligible_configuration_wins(engine):
-    decision = engine.route(by_name("deduplication identity semantics").fingerprint)
+    decision = engine.route(by_name("deduplication identity semantics").fingerprint).codex
     eligible = [s for s in decision.evaluated if s.eligible]
     assert eligible
     cheapest = min(eligible, key=lambda s: s.predicted_burn)
@@ -269,7 +269,7 @@ def test_the_cheapest_eligible_configuration_wins(engine):
 
 def test_the_winner_clears_the_bar(engine):
     for expectation in EXPECTATIONS:
-        decision = engine.route(expectation.fingerprint)
+        decision = engine.route(expectation.fingerprint).codex
         if decision.threshold_met:
             assert decision.predicted_reliability >= decision.required_reliability, (
                 expectation.name
@@ -278,7 +278,7 @@ def test_the_winner_clears_the_bar(engine):
 
 def test_stronger_eligible_options_are_left_on_the_table(engine):
     """Minimum sufficient, not maximum available."""
-    decision = engine.route(by_name("deduplication identity semantics").fingerprint)
+    decision = engine.route(by_name("deduplication identity semantics").fingerprint).codex
     stronger_and_eligible = [
         s
         for s in decision.evaluated
@@ -290,14 +290,12 @@ def test_stronger_eligible_options_are_left_on_the_table(engine):
     assert ReasonCode.MINIMUM_SUFFICIENT_CONFIGURATION in decision.reason_codes
 
 
-def test_fallback_prefers_a_different_provider(engine):
-    """Most real stalls are provider-shaped: rate limits, outages, exhausted quota."""
-    decision = engine.route(by_name("deduplication identity semantics").fingerprint)
+def test_fallback_stays_within_the_provider(engine):
+    """Fallback is an independent alternative within the chosen provider."""
+    decision = engine.route(by_name("deduplication identity semantics").fingerprint).codex
     assert decision.fallback is not None
     assert decision.fallback != decision.configuration
-    providers = {s.configuration.provider for s in decision.evaluated if s.eligible}
-    if len(providers) > 1:
-        assert decision.fallback.provider != decision.provider
+    assert decision.fallback.provider == decision.provider
 
 
 def test_no_eligible_configuration_falls_back_to_the_strongest(config):
@@ -311,7 +309,7 @@ def test_no_eligible_configuration_falls_back_to_the_strongest(config):
         model.enabled = name == "luna"
 
     engine = RoutingEngine(registry, config.policy, config.families)
-    decision = engine.route(by_name("cross-system data integrity under concurrency").fingerprint)
+    decision = engine.route(by_name("cross-system data integrity under concurrency").fingerprint).codex
 
     assert decision.threshold_met is False
     assert ReasonCode.NO_CONFIGURATION_MEETS_THRESHOLD in decision.reason_codes
@@ -323,7 +321,7 @@ def test_no_eligible_configuration_falls_back_to_the_strongest(config):
 
 def test_an_unknown_task_family_is_rejected(engine):
     with pytest.raises(ValueError, match="unknown task_family"):
-        engine.route(fp(task_family="vibes_based_engineering"))
+        engine.route(fp(task_family="vibes_based_engineering")).codex
 
 
 # --------------------------------------------------------------------------
@@ -333,7 +331,7 @@ def test_an_unknown_task_family_is_rejected(engine):
 
 def test_history_moves_the_estimate(engine, policy):
     fingerprint = by_name("straightforward REST endpoint").fingerprint
-    baseline = engine.route(fingerprint)
+    baseline = engine.route(fingerprint).codex
     target = baseline.configuration
 
     def failing(_family, provider, model, effort):
@@ -341,7 +339,7 @@ def test_history_moves_the_estimate(engine, policy):
             return HistoricalEvidence(weighted_attempts=30.0, weighted_successes=9.0)
         return EMPTY_EVIDENCE
 
-    punished = engine.route(fingerprint, failing)
+    punished = engine.route(fingerprint, failing).codex
     scored = next(
         s for s in punished.evaluated if s.configuration == target
     )
@@ -352,7 +350,7 @@ def test_history_moves_the_estimate(engine, policy):
 def test_one_result_cannot_swing_a_recommendation(engine, policy):
     """Rule 11: no single import may wildly alter routing."""
     fingerprint = by_name("straightforward REST endpoint").fingerprint
-    baseline = engine.route(fingerprint)
+    baseline = engine.route(fingerprint).codex
     target = baseline.configuration
 
     def one_failure(_family, provider, model, effort):
@@ -360,7 +358,7 @@ def test_one_result_cannot_swing_a_recommendation(engine, policy):
             return HistoricalEvidence(weighted_attempts=1.0, weighted_successes=0.0)
         return EMPTY_EVIDENCE
 
-    after = engine.route(fingerprint, one_failure)
+    after = engine.route(fingerprint, one_failure).codex
     scored = next(s for s in after.evaluated if s.configuration == target)
     assert abs(scored.history_shift) <= policy.learning.max_history_shift + 1e-9
     assert abs(scored.history_shift) < 0.06
@@ -368,7 +366,7 @@ def test_one_result_cannot_swing_a_recommendation(engine, policy):
 
 def test_history_shift_is_hard_capped(engine, policy):
     fingerprint = by_name("straightforward REST endpoint").fingerprint
-    target = engine.route(fingerprint).configuration
+    target = engine.route(fingerprint).codex.configuration
 
     def catastrophic(_family, provider, model, effort):
         if (provider, model, effort) == (target.provider, target.model, target.effort):
@@ -376,7 +374,7 @@ def test_history_shift_is_hard_capped(engine, policy):
         return EMPTY_EVIDENCE
 
     scored = next(
-        s for s in engine.route(fingerprint, catastrophic).evaluated
+        s for s in engine.route(fingerprint, catastrophic).codex.evaluated
         if s.configuration == target
     )
     assert scored.history_shift >= -policy.learning.max_history_shift - 1e-9
@@ -384,14 +382,14 @@ def test_history_shift_is_hard_capped(engine, policy):
 
 def test_evidence_is_reported_on_the_decision(engine):
     fingerprint = by_name("straightforward REST endpoint").fingerprint
-    target = engine.route(fingerprint).configuration
+    target = engine.route(fingerprint).codex.configuration
 
     def evidence(_family, provider, model, effort):
         if (provider, model, effort) == (target.provider, target.model, target.effort):
             return HistoricalEvidence(weighted_attempts=25.0, weighted_successes=24.0)
         return EMPTY_EVIDENCE
 
-    decision = engine.route(fingerprint, evidence)
+    decision = engine.route(fingerprint, evidence).codex
     winner = next(s for s in decision.evaluated if s.configuration == target)
     if decision.configuration == target:
         assert decision.evidence_weight == pytest.approx(25.0)
@@ -404,14 +402,14 @@ def test_evidence_is_reported_on_the_decision(engine):
 
 
 def test_ambiguity_lowers_confidence(engine):
-    clear = engine.route(fp(ambiguity=0.05, confidence=0.95))
-    vague = engine.route(fp(ambiguity=0.85, confidence=0.5))
+    clear = engine.route(fp(ambiguity=0.05, confidence=0.95)).codex
+    vague = engine.route(fp(ambiguity=0.85, confidence=0.5)).codex
     assert vague.confidence < clear.confidence
 
 
 def test_confidence_stays_in_range(engine):
     for expectation in EXPECTATIONS:
-        decision = engine.route(expectation.fingerprint)
+        decision = engine.route(expectation.fingerprint).codex
         assert 0.0 <= decision.confidence <= 1.0, expectation.name
 
 
@@ -422,20 +420,20 @@ def test_confidence_stays_in_range(engine):
 
 def test_every_explanation_block_is_populated(engine):
     for expectation in EXPECTATIONS:
-        decision = engine.route(expectation.fingerprint)
+        decision = engine.route(expectation.fingerprint).codex
         explanation = decision.explanation
         for field in ("summary", "why", "why_not_lighter", "why_not_stronger", "evidence_note"):
             assert getattr(explanation, field).strip(), f"{expectation.name}: {field} is empty"
 
 
 def test_explanation_admits_when_there_is_no_history(engine):
-    decision = engine.route(by_name("change button text").fingerprint)
+    decision = engine.route(by_name("change button text").fingerprint).codex
     assert "Limited historical data" in decision.explanation.evidence_note
     assert ReasonCode.LIMITED_HISTORICAL_DATA in decision.reason_codes
 
 
 def test_reason_codes_name_the_actual_risks(engine):
-    decision = engine.route(by_name("duplicate payments race condition").fingerprint)
+    decision = engine.route(by_name("duplicate payments race condition").fingerprint).codex
     assert ReasonCode.HIGH_CONCURRENCY_RISK in decision.reason_codes
     assert ReasonCode.HIGH_COMPLEXITY in decision.reason_codes
     assert ReasonCode.MULTI_SERVICE_SCOPE in decision.reason_codes

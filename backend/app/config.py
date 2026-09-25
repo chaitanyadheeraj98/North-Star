@@ -85,7 +85,9 @@ class ConfigBundle:
 
     def __init__(self, config_dir: Path) -> None:
         self._dir = config_dir
-        self._lock = threading.Lock()
+        # The application runs one backend worker; reload and registry updates
+        # share this lock so a reload cannot observe an uncommitted replacement.
+        self.reload_lock = threading.RLock()
         self._registry: ModelRegistry | None = None
         self._policy: RoutingPolicy | None = None
         self._families: TaskFamilyRegistry | None = None
@@ -96,6 +98,10 @@ class ConfigBundle:
 
     def load(self) -> None:
         """Parse and validate every config file. Raises ConfigError on any problem."""
+        with self.reload_lock:
+            self._load()
+
+    def _load(self) -> None:
         registry_raw = _read_yaml(self._dir / "models.yaml")
         policy_raw = _read_yaml(self._dir / "routing.yaml")
         families_raw = _read_yaml(self._dir / "task_families.yaml")
@@ -115,10 +121,15 @@ class ConfigBundle:
 
         _cross_validate(registry, policy, families)
 
-        with self._lock:
+        with self.reload_lock:
             self._registry = registry
             self._policy = policy
             self._families = families
+
+    def validate_registry(self, registry: ModelRegistry) -> None:
+        policy = RoutingPolicy.model_validate(_read_yaml(self._dir / "routing.yaml"))
+        families = TaskFamilyRegistry.model_validate(_read_yaml(self._dir / "task_families.yaml"))
+        _cross_validate(registry, policy, families)
 
     def _ensure(self) -> None:
         if self._registry is None:

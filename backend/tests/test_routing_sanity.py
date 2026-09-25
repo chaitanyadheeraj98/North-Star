@@ -20,7 +20,7 @@ from .fixtures import EXPECTATIONS, LIGHT_MODELS, PREMIUM_MODELS, by_name
 
 @pytest.mark.parametrize("expectation", EXPECTATIONS, ids=lambda e: e.name)
 def test_reference_task_lands_in_its_band(engine, expectation):
-    decision = engine.route(expectation.fingerprint)
+    decision = engine.route(expectation.fingerprint).codex
     where = (
         f"{expectation.name}: got {decision.provider}/{decision.model}/"
         f"{decision.effort.value} at burn {decision.predicted_burn:.2f}"
@@ -40,10 +40,10 @@ def test_reference_task_lands_in_its_band(engine, expectation):
 
 def test_harder_tasks_cost_more_than_easier_ones(engine):
     """The central ordering property of the whole product."""
-    trivial = engine.route(by_name("change button text").fingerprint)
-    routine = engine.route(by_name("straightforward REST endpoint").fingerprint)
-    hard = engine.route(by_name("deduplication identity semantics").fingerprint)
-    nasty = engine.route(by_name("duplicate payments race condition").fingerprint)
+    trivial = engine.route(by_name("change button text").fingerprint).codex
+    routine = engine.route(by_name("straightforward REST endpoint").fingerprint).codex
+    hard = engine.route(by_name("deduplication identity semantics").fingerprint).codex
+    nasty = engine.route(by_name("duplicate payments race condition").fingerprint).codex
 
     burns = [
         trivial.predicted_burn,
@@ -58,10 +58,10 @@ def test_harder_tasks_cost_more_than_easier_ones(engine):
 
 
 def test_required_reliability_rises_across_the_ladder(engine):
-    trivial = engine.route(by_name("change button text").fingerprint)
-    routine = engine.route(by_name("straightforward REST endpoint").fingerprint)
-    hard = engine.route(by_name("deduplication identity semantics").fingerprint)
-    nasty = engine.route(by_name("duplicate payments race condition").fingerprint)
+    trivial = engine.route(by_name("change button text").fingerprint).codex
+    routine = engine.route(by_name("straightforward REST endpoint").fingerprint).codex
+    hard = engine.route(by_name("deduplication identity semantics").fingerprint).codex
+    nasty = engine.route(by_name("duplicate payments race condition").fingerprint).codex
 
     bars = [
         trivial.required_reliability,
@@ -78,8 +78,8 @@ def test_prompt_length_does_not_drive_cost(engine):
     This is the property the analyzer prompt works hardest to get right, and
     the one that would quietly waste the most quota if the router got it wrong.
     """
-    huge_but_simple = engine.route(by_name("very long but very simple task").fingerprint)
-    small_but_hard = engine.route(by_name("deduplication identity semantics").fingerprint)
+    huge_but_simple = engine.route(by_name("very long but very simple task").fingerprint).codex
+    small_but_hard = engine.route(by_name("deduplication identity semantics").fingerprint).codex
     assert huge_but_simple.predicted_burn < small_but_hard.predicted_burn
 
 
@@ -89,7 +89,7 @@ def test_clarity_plus_difficulty_does_not_force_max(engine):
     Maximum reasoning is for tasks where the model must search, not for tasks
     that are merely large and precisely specified.
     """
-    decision = engine.route(by_name("high complexity with perfect clarity").fingerprint)
+    decision = engine.route(by_name("high complexity with perfect clarity").fingerprint).codex
     assert decision.effort not in (Effort.MAX, Effort.ULTRA)
 
 
@@ -100,14 +100,14 @@ def test_no_trivial_task_reaches_a_premium_model(engine):
         "documentation update",
         "mechanical rename across 40 files",
     ):
-        decision = engine.route(by_name(name).fingerprint)
+        decision = engine.route(by_name(name).fingerprint).codex
         assert decision.model not in PREMIUM_MODELS, f"{name} -> {decision.model}"
 
 
 def test_narrow_trivial_tasks_do_not_buy_heavy_reasoning(engine):
     """A one-line change has nothing for extra reasoning to chew on."""
     for name in ("change button text", "change CSS padding", "documentation update"):
-        decision = engine.route(by_name(name).fingerprint)
+        decision = engine.route(by_name(name).fingerprint).codex
         assert decision.effort not in (Effort.XHIGH, Effort.MAX, Effort.ULTRA), (
             f"{name} -> {decision.effort.value}"
         )
@@ -121,8 +121,8 @@ def test_a_wide_mechanical_task_buys_care_rather_than_capability(engine):
     the next model tier at its cheapest effort. What must NOT happen is paying
     for a stronger model, so the assertion is on cost and tier, not on effort.
     """
-    decision = engine.route(by_name("mechanical rename across 40 files").fingerprint)
-    hard = engine.route(by_name("deduplication identity semantics").fingerprint)
+    decision = engine.route(by_name("mechanical rename across 40 files").fingerprint).codex
+    hard = engine.route(by_name("deduplication identity semantics").fingerprint).codex
 
     assert decision.model not in PREMIUM_MODELS
     assert decision.predicted_burn < hard.predicted_burn / 3, (
@@ -138,21 +138,21 @@ def test_no_high_risk_task_is_left_on_a_light_model(engine):
         "cross-system data integrity under concurrency",
         "deduplication identity semantics",
     ):
-        decision = engine.route(by_name(name).fingerprint)
+        decision = engine.route(by_name(name).fingerprint).codex
         assert decision.model not in LIGHT_MODELS, f"{name} -> {decision.model}"
         assert decision.effort not in (Effort.NONE, Effort.LOW), name
 
 
 def test_read_only_work_is_not_charged_for_regression_risk(engine):
     """Analysis and design produce no code, so the bar should stay moderate."""
-    analysis = engine.route(by_name("repository analysis").fingerprint)
-    integrity = engine.route(by_name("deduplication identity semantics").fingerprint)
+    analysis = engine.route(by_name("repository analysis").fingerprint).codex
+    integrity = engine.route(by_name("deduplication identity semantics").fingerprint).codex
     assert analysis.required_reliability < integrity.required_reliability
 
 
 def test_every_reference_task_produces_a_usable_decision(engine):
     for expectation in EXPECTATIONS:
-        decision = engine.route(expectation.fingerprint)
+        decision = engine.route(expectation.fingerprint).codex
         assert decision.provider and decision.model, expectation.name
         assert 0.0 <= decision.predicted_reliability <= 1.0
         assert decision.predicted_burn > 0.0

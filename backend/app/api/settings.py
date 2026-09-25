@@ -67,6 +67,7 @@ async def get_settings_view(
                     "display_name": model.display_name,
                     "model_id": model.model_id,
                     "enabled": model.enabled,
+                    "review_required": model.review_required,
                     "supported_efforts": [e.value for e in model.supported_efforts],
                     "routable_efforts": [
                         e.value for e in registry.allowed_efforts(name, model_key)

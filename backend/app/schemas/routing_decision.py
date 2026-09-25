@@ -7,7 +7,7 @@ Same inputs, same output, always.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .enums import Effort, EvidenceBand, ReasonCode
 
@@ -134,6 +134,7 @@ class RoutingDecision(BaseModel):
         description="Next best option if the primary route is unavailable or stalls.",
     )
     fallback_display: str | None = None
+    fallback_threshold_met: bool | None = None
 
     #: Nearby configurations that were rejected, for the UI and for auditing.
     rejected_lighter: ConfigurationScore | None = None
@@ -153,3 +154,32 @@ class RoutingDecision(BaseModel):
     @property
     def configuration(self) -> Configuration:
         return Configuration(provider=self.provider, model=self.model, effort=self.effort)
+
+
+class RoutingRecommendations(BaseModel):
+    """Independent routes. A missing route is explicit, never a provider winner."""
+
+    model_config = ConfigDict(extra="forbid")
+    router_version: str
+    registry_version: str
+    codex: RoutingDecision | None = None
+    claude: RoutingDecision | None = None
+    unavailable: dict[str, str] = Field(default_factory=dict)
+    legacy: bool = False
+
+    @model_validator(mode="after")
+    def check_providers(self) -> RoutingRecommendations:
+        for provider in ("codex", "claude"):
+            decision = getattr(self, provider)
+            if decision and decision.provider != provider:
+                raise ValueError(f"{provider} recommendation belongs to another provider")
+            if decision and not self.legacy:
+                configurations = [s.configuration for s in decision.evaluated]
+                if decision.fallback:
+                    configurations.append(decision.fallback)
+                if any(c.provider != provider for c in configurations):
+                    raise ValueError(f"{provider} recommendation crosses provider boundaries")
+        return self
+
+    def for_provider(self, provider: str) -> RoutingDecision | None:
+        return getattr(self, provider) if provider in ("codex", "claude") else None

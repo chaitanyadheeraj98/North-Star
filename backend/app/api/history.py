@@ -10,6 +10,7 @@ from ..config import ConfigBundle
 from ..db.models import Execution, RoutingDecisionRow, Task, TaskFingerprintRow
 from ..schemas.api import HistoryResponse, HistoryRow
 from .deps import ConfigDep, SessionDep
+from ..services.routing_service import load_decision
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -73,10 +74,14 @@ def get_history(
     for task, fingerprint, decision, execution in rows:
         metrics = execution.metrics if execution else None
 
-        recommended_display = None
-        if decision is not None:
-            p, m = config.registry.display(decision.provider, decision.model)
-            recommended_display = f"{p} {m} ({decision.effort})"
+        recommendations = load_decision(decision) if decision else None
+        displays = {
+            provider: f"{d.provider_display} {d.model_display} ({d.effort.value})"
+            for provider in ("codex", "claude")
+            if recommendations and (d := recommendations.for_provider(provider))
+        }
+        chosen = recommendations.for_provider(execution.actual_provider) if recommendations and execution else None
+        recommended_display = " | ".join(displays.values()) or None
 
         actual_display = None
         if execution is not None:
@@ -92,10 +97,11 @@ def get_history(
                 task_family=fingerprint.task_family if fingerprint else None,
                 created_at=task.created_at,
                 status=task.status,
-                recommended_provider=decision.provider if decision else None,
-                recommended_model=decision.model if decision else None,
-                recommended_effort=decision.effort if decision else None,
+                recommended_provider=chosen.provider if chosen else None,
+                recommended_model=chosen.model if chosen else None,
+                recommended_effort=chosen.effort.value if chosen else None,
                 recommended_display=recommended_display,
+                recommendations=displays,
                 actual_provider=execution.actual_provider if execution else None,
                 actual_model=execution.actual_model if execution else None,
                 actual_effort=execution.actual_effort if execution else None,
@@ -107,7 +113,7 @@ def get_history(
                 first_pass_success=metrics.first_pass_success if metrics else None,
                 escalated=(execution.escalation is not None) if execution else None,
                 debug_cycles=metrics.debug_cycles if metrics else None,
-                predicted_burn=decision.predicted_burn if decision else None,
+                predicted_burn=chosen.predicted_burn if chosen else None,
                 estimated_effective_burn=(
                     metrics.estimated_effective_burn if metrics else None
                 ),

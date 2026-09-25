@@ -28,6 +28,7 @@ from ...schemas.routing_decision import (
     ConfigurationScore,
     RiskProfile,
     RoutingDecision,
+    RoutingRecommendations,
 )
 from ...schemas.routing_policy import RoutingPolicy
 from ...schemas.task_fingerprint import TaskFingerprint
@@ -65,6 +66,24 @@ class RoutingEngine:
         self,
         fingerprint: TaskFingerprint,
         evidence_lookup: EvidenceLookup = no_evidence,
+    ) -> RoutingRecommendations:
+        result = RoutingRecommendations(
+            router_version=self.policy.router_version,
+            registry_version=self.registry.registry_version,
+        )
+        available = {p for p, _, _ in self.registry.enabled_configurations()}
+        for provider in ("codex", "claude"):
+            if provider in available:
+                setattr(result, provider, self.route_provider(fingerprint, provider, evidence_lookup))
+            else:
+                result.unavailable[provider] = "No enabled models with routable efforts."
+        return result
+
+    def route_provider(
+        self,
+        fingerprint: TaskFingerprint,
+        provider: str,
+        evidence_lookup: EvidenceLookup = no_evidence,
     ) -> RoutingDecision:
         if not self.families.has(fingerprint.task_family):
             raise ValueError(
@@ -84,7 +103,7 @@ class RoutingEngine:
         # Pass 1: reliability and base burn for every candidate. Effective burn
         # needs the escalation reference, which is only known once the eligible
         # set exists, so it is computed in pass 2.
-        partials = self._score_all(fingerprint, difficulty, required, evidence_lookup)
+        partials = self._score_all(fingerprint, difficulty, required, evidence_lookup, provider)
         if not partials:  # pragma: no cover - config validation forbids this
             raise RuntimeError("no routable configurations; check models.yaml")
 
@@ -116,6 +135,8 @@ class RoutingEngine:
             eligible_scores = [s for s in scores if s.eligible]
             winner = eligible_scores[0]
             fallback = self._pick_fallback(winner, eligible_scores)
+            if fallback is None:
+                fallback = self._pick_fallback(winner, scores)
         else:
             # Nothing clears the bar: take the most reliable thing available and
             # be explicit about it rather than pretending the choice was fine.
@@ -192,6 +213,7 @@ class RoutingEngine:
             reason_codes=reason_codes,
             fallback=fallback.configuration if fallback else None,
             fallback_display=fallback_display,
+            fallback_threshold_met=fallback.eligible if fallback else None,
             rejected_lighter=lighter,
             rejected_stronger=stronger,
             evaluated=scores,
@@ -208,9 +230,12 @@ class RoutingEngine:
         difficulty: float,
         required: float,
         evidence_lookup: EvidenceLookup,
+        selected_provider: str,
     ) -> list[_Partial]:
         out: list[_Partial] = []
         for provider_name, model_name, effort in self.registry.enabled_configurations():
+            if provider_name != selected_provider:
+                continue
             provider = self.registry.providers[provider_name]
             model = provider.models[model_name]
 
@@ -288,19 +313,14 @@ class RoutingEngine:
     def _pick_fallback(
         self, winner: ConfigurationScore, eligible: list[ConfigurationScore]
     ) -> ConfigurationScore | None:
-        """A second route for when the first one stalls.
-
-        Preference order: a different provider first, because most real stalls
-        are provider-shaped (rate limit, outage, quota exhausted). Failing
-        that, the next eligible option on cost.
-        """
+        """Next eligible configuration within this provider; prefer another model."""
         others = [s for s in eligible if s.configuration != winner.configuration]
         if not others:
             return None
-        cross_provider = [
-            s for s in others if s.configuration.provider != winner.configuration.provider
+        other_models = [
+            s for s in others if s.configuration.model != winner.configuration.model
         ]
-        pool = cross_provider or others
+        pool = other_models or others
         return min(pool, key=lambda s: (s.predicted_burn, _stable_key(s)))
 
     # -- confidence ------------------------------------------------------------

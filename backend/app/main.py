@@ -48,7 +48,7 @@ app = FastAPI(
     version=get_settings().app_version,
     summary="Use the right amount of AI for the task.",
     description=(
-        "Local-first router that recommends provider, model and reasoning effort for a "
+        "Local-first router that independently recommends a model and reasoning effort per provider for a "
         "coding task, then learns from what actually happened. Pi classifies; this "
         "backend decides and learns."
     ),

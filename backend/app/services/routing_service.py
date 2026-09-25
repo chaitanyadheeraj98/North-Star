@@ -22,13 +22,13 @@ from ..db.models import (
     TaskFingerprintRow,
 )
 from ..schemas.enums import TaskStatus
-from ..schemas.routing_decision import RoutingDecision
+from ..schemas.routing_decision import RoutingDecision, RoutingRecommendations
 from ..schemas.task_fingerprint import AnalyzerMetadata, TaskFingerprint
 
 
 def route_fingerprint(
     session: Session, config: ConfigBundle, fingerprint: TaskFingerprint
-) -> RoutingDecision:
+) -> RoutingRecommendations:
     """Produce a recommendation, informed by everything recorded so far."""
     index = build_evidence_index(
         session, config.policy, task_family=fingerprint.task_family
@@ -77,7 +77,7 @@ def store_fingerprint(
 
 
 def store_decision(
-    session: Session, config: ConfigBundle, task: Task, decision: RoutingDecision
+    session: Session, config: ConfigBundle, task: Task, decision: RoutingRecommendations
 ) -> RoutingDecisionRow:
     """Persist a recommendation in full.
 
@@ -89,14 +89,17 @@ def store_decision(
 
     row = RoutingDecisionRow(
         task_id=task.id,
-        provider=decision.provider,
-        model=decision.model,
-        effort=decision.effort.value,
-        confidence=decision.confidence,
-        required_reliability=decision.required_reliability,
-        predicted_reliability=decision.predicted_reliability,
-        predicted_burn=decision.predicted_burn,
-        threshold_met=decision.threshold_met,
+        # Legacy summary columns are retained for existing databases. New
+        # decisions have no overall winner or comparable cross-provider score;
+        # their provider-specific summaries live in the versioned JSON below.
+        provider="independent",
+        model="",
+        effort="none",
+        confidence=0,
+        required_reliability=0,
+        predicted_reliability=0,
+        predicted_burn=0,
+        threshold_met=False,
         explanation_json=decision.model_dump(mode="json"),
         router_version=decision.router_version,
         registry_version=decision.registry_version,
@@ -107,7 +110,21 @@ def store_decision(
     return row
 
 
-def load_decision(row: RoutingDecisionRow) -> RoutingDecision:
+def load_decision(row: RoutingDecisionRow) -> RoutingRecommendations:
+    if "codex" in row.explanation_json or "claude" in row.explanation_json:
+        return RoutingRecommendations.model_validate(row.explanation_json)
+    decision = _load_legacy_decision(row)
+    return RoutingRecommendations(
+        router_version=decision.router_version,
+        registry_version=decision.registry_version,
+        **{decision.provider: decision},
+        legacy=True,
+        unavailable={p: "Not recorded by the earlier router; reanalyze for both providers."
+                     for p in ("codex", "claude") if p != decision.provider},
+    )
+
+
+def _load_legacy_decision(row: RoutingDecisionRow) -> RoutingDecision:
     """Rehydrate a stored decision.
 
     Falls back to a reduced view if the stored JSON predates a schema change,

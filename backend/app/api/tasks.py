@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -18,7 +18,7 @@ from ..schemas.api import (
     TaskResponse,
     TaskSummary,
 )
-from ..schemas.routing_decision import RoutingDecision
+from ..schemas.routing_decision import RoutingRecommendations
 from ..schemas.task_fingerprint import (
     AnalyzerMetadata,
     FingerprintEnvelope,
@@ -50,15 +50,15 @@ async def create_task(
 
     analyzer_info: AnalyzerInfo | None = None
     fingerprint: TaskFingerprint | None = None
-    decision: RoutingDecision | None = None
-    handoff: str | None = None
+    decision: RoutingRecommendations | None = None
+    handoffs: dict[str, str] = {}
 
     if body.analyze:
         envelope, analyzer_info = await _run_analyzer(
             body.task, body.analyzer, body.allow_fallback, _analyzer_overrides(session)
         )
         fingerprint = envelope.fingerprint
-        decision, handoff = _route_and_store(
+        decision, handoffs = _route_and_store(
             session, config, task, envelope, analyzer_info.source
         )
 
@@ -74,7 +74,7 @@ async def create_task(
         fingerprint=fingerprint,
         analyzer=analyzer_info,
         recommendation=decision,
-        handoff=handoff,
+        handoffs=handoffs,
     )
 
 
@@ -95,7 +95,7 @@ async def analyze_task(
         request.allow_fallback,
         _analyzer_overrides(session),
     )
-    decision, handoff = _route_and_store(
+    decision, handoffs = _route_and_store(
         session, config, task, envelope, analyzer_info.source
     )
     session.commit()
@@ -110,7 +110,7 @@ async def analyze_task(
         fingerprint=envelope.fingerprint,
         analyzer=analyzer_info,
         recommendation=decision,
-        handoff=handoff,
+        handoffs=handoffs,
     )
 
 
@@ -146,7 +146,7 @@ def get_task(
     return _task_response(session, config, task)
 
 
-@router.get("/{public_task_id}/recommendation", response_model=RoutingDecision)
+@router.get("/{public_task_id}/recommendation", response_model=RoutingRecommendations)
 def get_recommendation(
     public_task_id: str,
     recompute: bool = Query(
@@ -156,7 +156,7 @@ def get_recommendation(
     ),
     session: Session = SessionDep,
     config: ConfigBundle = ConfigDep,
-) -> RoutingDecision:
+) -> RoutingRecommendations:
     task = _require_task(session, public_task_id)
 
     if recompute:
@@ -180,6 +180,7 @@ def get_recommendation(
 @router.get("/{public_task_id}/handoff", response_model=HandoffResponse)
 def get_handoff(
     public_task_id: str,
+    provider: Literal["codex", "claude"] | None = Query(default=None),
     session: Session = SessionDep,
     config: ConfigBundle = ConfigDep,
 ) -> HandoffResponse:
@@ -191,19 +192,25 @@ def get_handoff(
             detail=f"{public_task_id} has no recommendation. Analyze it first.",
         )
 
-    entry = config.registry.model(decision_row.provider, decision_row.model)
-    model_id = entry.model_id if entry else decision_row.model
-
+    recommendations = routing_service.load_decision(decision_row)
+    if provider is None:
+        if recommendations.legacy:
+            provider = decision_row.provider
+        else:
+            raise HTTPException(status_code=422, detail="Choose a provider: codex or claude.")
+    decision = recommendations.for_provider(provider)
+    if decision is None:
+        raise HTTPException(status_code=409, detail=recommendations.unavailable.get(provider))
+    entry = config.registry.model(decision.provider, decision.model)
+    model_id = entry.model_id if entry else decision.model
     return HandoffResponse(
         public_task_id=task.public_task_id,
-        handoff=task_service.build_handoff(
-            task, decision_row, config.policy.router_version, model_id
-        ),
+        handoff=task_service.build_handoff(task, decision, decision.router_version, model_id),
         task_only=task.original_task,
-        provider=decision_row.provider,
-        model=decision_row.model,
+        provider=decision.provider,
+        model=decision.model,
         model_id=model_id,
-        effort=decision_row.effort,
+        effort=decision.effort.value,
     )
 
 
@@ -299,7 +306,7 @@ def _route_and_store(
     task: Task,
     envelope: FingerprintEnvelope,
     source: str,
-) -> tuple[RoutingDecision, str]:
+) -> tuple[RoutingRecommendations, dict[str, str]]:
     if not config.families.has(envelope.fingerprint.task_family):
         raise HTTPException(
             status_code=422,
@@ -314,16 +321,21 @@ def _route_and_store(
         session, task, envelope.fingerprint, analyzer_meta, source
     )
     decision = routing_service.route_fingerprint(session, config, envelope.fingerprint)
-    decision_row = routing_service.store_decision(session, config, task, decision)
+    routing_service.store_decision(session, config, task, decision)
+    return decision, _handoffs(config, task, decision)
 
-    entry = config.registry.model(decision.provider, decision.model)
-    handoff = task_service.build_handoff(
-        task,
-        decision_row,
-        config.policy.router_version,
-        entry.model_id if entry else decision.model,
-    )
-    return decision, handoff
+
+def _handoffs(config: ConfigBundle, task: Task, recommendations: RoutingRecommendations) -> dict[str, str]:
+    handoffs = {}
+    for provider in ("codex", "claude"):
+        decision = recommendations.for_provider(provider)
+        if decision:
+            entry = config.registry.model(provider, decision.model)
+            handoffs[provider] = task_service.build_handoff(
+                task, decision, decision.router_version,
+                entry.model_id if entry else decision.model,
+            )
+    return handoffs
 
 
 def _task_response(
@@ -344,18 +356,12 @@ def _task_response(
             fallback_used=row.source == "heuristic",
         )
 
-    decision: RoutingDecision | None = None
-    handoff: str | None = None
+    decision: RoutingRecommendations | None = None
+    handoffs: dict[str, str] = {}
     decision_row = task_service.latest_decision(session, task)
     if decision_row is not None:
         decision = routing_service.load_decision(decision_row)
-        entry = config.registry.model(decision_row.provider, decision_row.model)
-        handoff = task_service.build_handoff(
-            task,
-            decision_row,
-            config.policy.router_version,
-            entry.model_id if entry else decision_row.model,
-        )
+        handoffs = _handoffs(config, task, decision)
 
     execution_summary: dict[str, Any] | None = None
     execution = session.execute(
@@ -388,6 +394,6 @@ def _task_response(
         fingerprint=fingerprint,
         analyzer=analyzer,
         recommendation=decision,
-        handoff=handoff,
+        handoffs=handoffs,
         execution=execution_summary,
     )
