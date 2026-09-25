@@ -1,0 +1,238 @@
+# Adaptive LLM Router - Model Registry
+# =============================================================================
+# THIS FILE IS THE SINGLE SOURCE OF TRUTH FOR PROVIDERS, MODELS AND EFFORTS.
+# No provider or model string may be hardcoded anywhere in the Python source.
+# =============================================================================
+#
+# PROVENANCE OF THE NUMBERS IN THIS FILE
+# --------------------------------------
+# Fields marked  [SOURCE]  are derived from the reference documents in
+# reference/ClaudeLLM.md and reference/CodexLLM.md, which in turn cite the
+# published pricing / credit rates and published effort levels of each provider.
+#
+# Fields marked  [PRIOR]  are OUR OWN routing assumptions. They are starting
+# points for the router, not claims about provider behaviour or guarantees.
+# They are expected to be corrected over time by recorded execution outcomes.
+#
+# CRITICAL: there is NO published, fixed token multiplier for effort levels on
+# either provider. Both Anthropic and OpenAI use adaptive reasoning: the same
+# effort setting spends wildly different numbers of thinking tokens depending
+# on the task. `effort_burn_prior` lives in routing.yaml and is explicitly a
+# routing prior, never presented as a provider guarantee.
+
+schema_version: "1.0"
+registry_version: "1.0.0"
+
+# --- Cross-provider comparison ----------------------------------------------
+# Model burn is normalised WITHIN each provider against the workhorse model of
+# that provider (Claude Sonnet 5, Codex Terra), because quota is consumed
+# against two separate subscriptions that cannot be honestly converted into one
+# another. `burn_weight` on each provider is the user-tunable exchange rate that
+# places both onto the single axis the router compares. Default 1.0 / 1.0 means
+# "one Sonnet-5-equivalent unit of Claude quota is worth the same to me as one
+# Terra-equivalent unit of Codex quota". Edit these if that is not true for you.
+
+providers:
+
+  claude:
+    enabled: true
+    display_name: "Claude"
+    # [PRIOR] user-tunable subscription exchange rate
+    burn_weight: 1.0
+    # [SOURCE] burn normalised against Claude Sonnet 5 output pricing
+    burn_reference: "Claude Sonnet 5 output tokens = 1.0"
+    handoff_hint: "Claude Code: /model selects the model, then set the effort level."
+
+    models:
+
+      haiku_4_5:
+        display_name: "Haiku 4.5"
+        model_id: "claude-haiku-4-5"
+        enabled: true
+        # [SOURCE] ClaudeLLM.md model x effort matrix lists Haiku only at Low/Medium
+        supported_efforts: [low, medium]
+        # [SOURCE] 1 USD / 5 USD per 1M vs Sonnet 2 USD / 10 USD => 0.5x output price
+        relative_model_burn: 0.5
+        source_pricing: { input_per_1m_usd: 1, output_per_1m_usd: 5 }
+        # [PRIOR] capability priors, 0..1
+        capability_priors:
+          coding: 0.72
+          debugging: 0.65
+          architecture: 0.55
+          database: 0.58
+          concurrency: 0.50
+          security: 0.55
+          repository_understanding: 0.58
+        notes: "Token saver. Renames, tiny edits, simple questions."
+
+      sonnet_5:
+        display_name: "Sonnet 5"
+        model_id: "claude-sonnet-5"
+        enabled: true
+        supported_efforts: [low, medium, high, xhigh, max]
+        # [SOURCE] baseline for this provider
+        relative_model_burn: 1.0
+        source_pricing: { input_per_1m_usd: 2, output_per_1m_usd: 10 }
+        capability_priors:
+          coding: 0.90
+          debugging: 0.87
+          architecture: 0.82
+          database: 0.84
+          concurrency: 0.78
+          security: 0.82
+          repository_understanding: 0.86
+        notes: "Normal development default. Routine implementation through multi-file reasoning."
+
+      opus_5:
+        display_name: "Opus 5"
+        model_id: "claude-opus-5"
+        enabled: true
+        supported_efforts: [low, medium, high, xhigh, max]
+        # [SOURCE] 5 USD / 25 USD vs 2 USD / 10 USD => 2.5x output price
+        relative_model_burn: 2.5
+        source_pricing: { input_per_1m_usd: 5, output_per_1m_usd: 25 }
+        capability_priors:
+          coding: 0.95
+          debugging: 0.95
+          architecture: 0.95
+          database: 0.93
+          concurrency: 0.92
+          security: 0.93
+          repository_understanding: 0.94
+        notes: "Architecture decisions, difficult bugs, data-flow problems."
+
+      fable_5_1:
+        display_name: "Fable 5.1"
+        model_id: "claude-fable-5-1"
+        enabled: true
+        supported_efforts: [low, medium, high, xhigh, max]
+        # [SOURCE] 10 USD / 50 USD vs 2 USD / 10 USD => 5x output price
+        relative_model_burn: 5.0
+        source_pricing: { input_per_1m_usd: 10, output_per_1m_usd: 50 }
+        capability_priors:
+          coding: 0.96
+          debugging: 0.96
+          architecture: 0.97
+          database: 0.95
+          concurrency: 0.95
+          security: 0.95
+          repository_understanding: 0.95
+        notes: >
+          [SOURCE] On Pro, Fable draws on pay-as-you-go usage credits rather than
+          included usage; on Max it can consume up to 50 percent of the weekly
+          allocation and burns it faster. Reserve for work Opus cannot finish.
+
+  codex:
+    enabled: true
+    display_name: "Codex"
+    # [PRIOR] user-tunable subscription exchange rate
+    burn_weight: 1.0
+    # [SOURCE] burn normalised against GPT-5.6 Terra output/reasoning credit rate
+    burn_reference: "Codex GPT-5.6 Terra output+reasoning credits = 1.0"
+    handoff_hint: "Codex CLI: select the model, then set the reasoning effort."
+
+    models:
+
+      luna:
+        display_name: "GPT-5.6 Luna"
+        model_id: "gpt-5.6-luna"
+        enabled: true
+        # [SOURCE] CodexLLM.md: GPT-5.6 models support none, low, medium, high, xhigh, max
+        supported_efforts: [none, low, medium, high, xhigh, max, ultra]
+        # [SOURCE] 30 credits per 1M output vs Terra 300 => 0.1x
+        relative_model_burn: 0.1
+        source_pricing:
+          input_credits_per_1m: 5
+          cached_input_credits_per_1m: 0.5
+          output_credits_per_1m: 30
+        capability_priors:
+          coding: 0.70
+          debugging: 0.62
+          architecture: 0.52
+          database: 0.55
+          concurrency: 0.48
+          security: 0.52
+          repository_understanding: 0.55
+        notes: "Trivial fixes, searches, explaining code, renaming, repetitive work."
+
+      terra:
+        display_name: "GPT-5.6 Terra"
+        model_id: "gpt-5.6-terra"
+        enabled: true
+        supported_efforts: [none, low, medium, high, xhigh, max, ultra]
+        # [SOURCE] baseline for this provider
+        relative_model_burn: 1.0
+        source_pricing:
+          input_credits_per_1m: 50
+          cached_input_credits_per_1m: 5
+          output_credits_per_1m: 300
+        capability_priors:
+          coding: 0.88
+          debugging: 0.85
+          architecture: 0.80
+          database: 0.82
+          concurrency: 0.76
+          security: 0.80
+          repository_understanding: 0.84
+        notes: "Normal implementation work; the quota-preserving default."
+
+      sol:
+        display_name: "GPT-5.6 Sol"
+        model_id: "gpt-5.6-sol"
+        enabled: true
+        supported_efforts: [none, low, medium, high, xhigh, max, ultra]
+        # [SOURCE] 500 credits per 1M output vs Terra 300 => 1.667x
+        relative_model_burn: 1.667
+        source_pricing:
+          input_credits_per_1m: 100
+          cached_input_credits_per_1m: 10
+          output_credits_per_1m: 500
+        capability_priors:
+          coding: 0.95
+          debugging: 0.94
+          architecture: 0.90
+          database: 0.91
+          concurrency: 0.89
+          security: 0.90
+          repository_understanding: 0.92
+        notes: "Sweet spot for serious development: difficult debugging, multi-file changes."
+
+      astra:
+        display_name: "GPT-6 Astra"
+        model_id: "gpt-6-astra"
+        enabled: true
+        # [SOURCE] CodexLLM.md: Astra starts at low (no `none`) and supports through max
+        supported_efforts: [low, medium, high, xhigh, max, ultra]
+        # [SOURCE] 1250 credits per 1M output vs Terra 300 => 4.167x
+        relative_model_burn: 4.167
+        source_pricing:
+          input_credits_per_1m: 250
+          cached_input_credits_per_1m: 25
+          output_credits_per_1m: 1250
+        capability_priors:
+          coding: 0.96
+          debugging: 0.96
+          architecture: 0.95
+          database: 0.94
+          concurrency: 0.94
+          security: 0.94
+          repository_understanding: 0.95
+        notes: "Use when Sol is not reasoning deeply enough."
+
+# --- Effort policy -----------------------------------------------------------
+# `supported_efforts` above records what each provider actually supports.
+# This section records what THIS INSTALLATION is willing to route to.
+effort_policy:
+  # [PRIOR] `none` disables deliberate reasoning entirely, which is unsuitable for
+  # agentic coding work. `ultra` is [SOURCE] gated to eligible Codex users and may
+  # invoke additional agents, so its consumption is unbounded from our point of
+  # view. Remove an entry from this list to let the router consider it.
+  disabled_efforts: [none, ultra]
+
+# --- Task-family affinity ----------------------------------------------------
+# Optional per-model nudges for specific task families, in the range
+# [-0.10, 0.10], keyed as: "<provider>.<model>.<task_family>: <nudge>".
+# Deliberately EMPTY by default: we have no evidence-based affinities yet, and
+# inventing them would be indistinguishable from making up facts. The mechanism
+# exists so that measured evidence can be promoted into it later.
+family_affinity: {}

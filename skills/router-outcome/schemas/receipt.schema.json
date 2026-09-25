@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://adaptive-llm-router.local/schemas/receipt-1.0.json",
+  "title": "Adaptive LLM Router Execution Receipt",
+  "description": "Outcome report emitted by the router-outcome skill after a task is executed. Mirrors backend/app/schemas/execution_receipt.py, which is the authoritative validator.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["receipt_version", "task_id", "execution", "outcome"],
+  "properties": {
+    "receipt_version": { "const": "1.0" },
+    "task_id": {
+      "type": "string",
+      "pattern": "^RT-\\d{6,}$",
+      "description": "Copied verbatim from the [LLM-ROUTER] handoff block. Never invented."
+    },
+    "execution": {
+      "type": "object",
+      "description": "What actually ran, which may differ from what was recommended.",
+      "required": ["provider", "model", "effort"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "effort": { "$ref": "#/$defs/effort" }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["success", "partial", "failed"] },
+        "implementation_complete": { "type": "boolean", "default": false },
+        "first_pass_success": {
+          "type": "boolean",
+          "default": false,
+          "description": "Must be false when debug_cycles > 0 or an escalation occurred."
+        },
+        "tests_passed": {
+          "type": ["boolean", "null"],
+          "description": "null when no tests were run. Never true for tests that were not executed."
+        },
+        "build_passed": {
+          "type": ["boolean", "null"],
+          "description": "null when nothing was built or type-checked."
+        },
+        "known_regression": { "type": "boolean", "default": false }
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files_read": { "type": ["integer", "null"], "minimum": 0 },
+        "files_modified": { "type": ["integer", "null"], "minimum": 0 },
+        "debug_cycles": { "type": "integer", "minimum": 0, "default": 0 },
+        "major_replans": { "type": "integer", "minimum": 0, "default": 0 },
+        "user_corrections": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "occurred": { "type": "boolean", "default": false },
+        "from_provider": { "type": ["string", "null"] },
+        "from_model": { "type": ["string", "null"] },
+        "from_effort": { "oneOf": [{ "$ref": "#/$defs/effort" }, { "type": "null" }] },
+        "to_provider": { "type": ["string", "null"] },
+        "to_model": { "type": ["string", "null"] },
+        "to_effort": { "oneOf": [{ "$ref": "#/$defs/effort" }, { "type": "null" }] },
+        "reason": { "type": ["string", "null"], "maxLength": 2000 }
+      },
+      "if": { "properties": { "occurred": { "const": true } }, "required": ["occurred"] },
+      "then": {
+        "required": ["to_provider", "to_model", "to_effort"],
+        "properties": {
+          "to_provider": { "type": "string" },
+          "to_model": { "type": "string" },
+          "to_effort": { "$ref": "#/$defs/effort" }
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Measured usage only. There is deliberately no 'estimated' source: a guessed token count is indistinguishable from a measurement once stored, and would corrupt every statistic derived from it.",
+      "properties": {
+        "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "cached_input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "reasoning_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "provider_reported_cost": { "type": ["number", "null"], "minimum": 0 },
+        "source": { "enum": ["unavailable", "provider_reported"], "default": "unavailable" }
+      },
+      "if": {
+        "properties": { "source": { "const": "unavailable" } },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "input_tokens": { "const": null },
+          "cached_input_tokens": { "const": null },
+          "output_tokens": { "const": null },
+          "reasoning_tokens": { "const": null },
+          "provider_reported_cost": { "const": null }
+        }
+      }
+    },
+    "agent_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The executing agent's own read. Recorded, but weighted below the objective signals.",
+      "properties": {
+        "actual_complexity": {
+          "oneOf": [{ "enum": ["low", "medium", "high", "very_high"] }, { "type": "null" }]
+        },
+        "recommendation_fit": {
+          "enum": ["underpowered", "appropriate", "potentially_overpowered", "inconclusive"],
+          "default": "inconclusive"
+        },
+        "notes": { "type": "string", "maxLength": 4000, "default": "" }
+      }
+    }
+  },
+  "$defs": {
+    "effort": {
+      "enum": ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+    }
+  }
+}

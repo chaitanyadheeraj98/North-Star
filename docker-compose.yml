@@ -1,0 +1,53 @@
+# Adaptive LLM Router - local stack
+#
+#   docker compose up -d      then open http://localhost:3000
+#
+# Two containers only. The Pi bridge deliberately runs on the HOST, not here:
+# Pi authenticates against your existing Claude / ChatGPT subscriptions through
+# its own credential store, and a container would have neither those
+# credentials nor a browser to complete an OAuth login with. The backend
+# reaches it over the Docker host gateway.
+#
+#   scripts/start-pi.ps1      starts the bridge on 127.0.0.1:31415
+
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: adaptive-router-backend
+    restart: unless-stopped
+    ports:
+      # Exposed so you can hit the API and /docs directly. Bound to loopback
+      # because this database holds your task text, which may be proprietary.
+      # The host port is configurable because 8000 is a popular port; the
+      # frontend reaches the backend over the internal network either way, so
+      # changing it only affects direct API access.
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/router.db
+      CONFIG_DIR: /app/config
+      PI_BRIDGE_URL: ${PI_BRIDGE_URL:-http://host.docker.internal:31415}
+      PI_TIMEOUT_SECONDS: ${PI_TIMEOUT_SECONDS:-180}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    volumes:
+      # The database lives on the host so it survives image rebuilds.
+      - ./data:/app/data
+      # Config is mounted so routing.yaml and models.yaml can be edited on the
+      # host and applied with POST /api/models/reload, no rebuild needed.
+      - ./backend/config:/app/config
+    extra_hosts:
+      # Docker Desktop provides host.docker.internal automatically; this line is
+      # what makes the same compose file work on Linux, where it does not.
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: adaptive-router-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy

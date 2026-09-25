@@ -1,0 +1,23 @@
+{
+  "name": "adaptive-llm-router-pi-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Host-local HTTP bridge exposing Pi as the Adaptive LLM Router task analyzer.",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "dev": "node --watch src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/*.test.ts\""
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.73.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}

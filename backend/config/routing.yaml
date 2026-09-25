@@ -1,0 +1,242 @@
+# Adaptive LLM Router - Routing Policy
+# =============================================================================
+# Every number in this file is an APPLICATION POLICY PRIOR chosen by us.
+# None of it is a provider fact, a published multiplier, or a measurement.
+# The router is deterministic: the same fingerprint + registry + policy +
+# history always produces the same decision. Change a number here and the
+# decision changes; that is the intended tuning surface.
+# =============================================================================
+
+schema_version: "1.0"
+router_version: "1.0.0"
+
+# --- 1. Effort burn priors ---------------------------------------------------
+# Relative expected resource intensity of each effort level.
+#
+# THESE ARE NOT OFFICIAL TOKEN MULTIPLIERS. Neither Anthropic nor OpenAI
+# publishes a fixed conversion such as "high = 2x low". Both use adaptive
+# reasoning, so a trivial task at high effort may barely think while a hard
+# repository bug at the same setting can spend tens of thousands of reasoning
+# tokens. These values only express the ORDER and the ROUGH SHAPE of the
+# relationship for routing purposes.
+effort_burn_prior:
+  none: 0.85
+  low: 1.0
+  medium: 1.3
+  high: 1.8
+  xhigh: 2.5
+  max: 3.5
+  ultra: 5.5
+
+# --- 2. Effort capability gain -----------------------------------------------
+# How much reasoning effort moves a model away from its own failure ceiling.
+# Applied as: capability_effective = capability + gain * (1 - capability)
+#
+# Capability priors in models.yaml are calibrated AT MEDIUM EFFORT, so medium
+# is 0.0 and lower efforts are negative. Gains are deliberately sub-linear so
+# that a weak model at max effort never impersonates a strong model at medium:
+# a model with capability 0.70 reaches only 0.82 at max, well below a model
+# whose base capability is 0.92.
+effort_capability_gain:
+  none: -0.45
+  low: -0.20
+  medium: 0.0
+  high: 0.22
+  xhigh: 0.32
+  max: 0.40
+  ultra: 0.45
+
+# --- 3. Task difficulty ------------------------------------------------------
+# Difficulty is a weighted blend of the fingerprint dimensions. Weights sum to
+# 1.0. `clarity_gap` uses (1 - requirements_clarity).
+difficulty_weights:
+  complexity: 0.26
+  scope: 0.12
+  regression_risk: 0.12
+  ambiguity: 0.08
+  clarity_gap: 0.08
+  architecture_reasoning: 0.08
+  database_reasoning: 0.08
+  concurrency_risk: 0.07
+  security_risk: 0.06
+  repository_understanding: 0.05
+
+# Numeric difficulty contribution of each scope value.
+scope_scores:
+  single_line: 0.05
+  single_function: 0.15
+  single_file: 0.30
+  multi_file: 0.60
+  service: 0.75
+  multi_service: 0.85
+  architecture: 0.95
+
+# --- 4. Capability match weights ---------------------------------------------
+# Which capability dimensions matter, derived from the fingerprint itself.
+# `base_weight` is always present so that raw coding ability never stops
+# counting; the `driver` weights are scaled by the corresponding fingerprint
+# score, so a task with database_reasoning = 0.95 makes the database capability
+# dimension dominate while a cosmetic task makes it almost irrelevant.
+capability_weights:
+  coding:
+    base_weight: 1.0
+    driver: null
+  debugging:
+    base_weight: 0.10
+    driver: debugging_pressure
+  architecture:
+    base_weight: 0.05
+    driver: architecture_reasoning
+  database:
+    base_weight: 0.02
+    driver: database_reasoning
+  concurrency:
+    base_weight: 0.02
+    driver: concurrency_risk
+  security:
+    base_weight: 0.02
+    driver: security_risk
+  repository_understanding:
+    base_weight: 0.05
+    driver: repository_understanding
+# How strongly a driver at 1.0 amplifies its dimension.
+capability_driver_scale: 1.6
+
+# --- 5. Predicted reliability model ------------------------------------------
+# reliability = 1 - failure_rate
+# failure_rate = scale * deficit^deficit_exponent * difficulty_eff^difficulty_exponent
+# deficit         = 1 - capability_effective
+# difficulty_eff  = difficulty_floor + (1 - difficulty_floor) * difficulty
+#
+# The floor exists because even a trivial task carries some irreducible risk of
+# a wrong edit, so no configuration is ever predicted at 100 percent.
+reliability_model:
+  scale: 13.0
+  deficit_exponent: 2.0
+  difficulty_exponent: 1.2
+  difficulty_floor: 0.15
+  min_reliability: 0.05
+  max_reliability: 0.995
+
+# --- 6. Required reliability -------------------------------------------------
+# Derived from the fingerprint, not from the task family alone. The family only
+# supplies a small additive nudge (see task_families.yaml).
+required_reliability:
+  base: 0.80
+  risk_coefficients:
+    regression_risk: 0.050
+    database_reasoning: 0.045
+    security_risk: 0.070
+    concurrency_risk: 0.070
+    complexity: 0.025
+    scope: 0.020
+  # Ambiguity does not raise the reliability BAR (an ambiguous task is not more
+  # dangerous), it lowers router confidence instead. See `confidence` below.
+  min: 0.78
+  max: 0.98
+
+# --- 7. Effective burn -------------------------------------------------------
+# effective_burn =
+#     base
+#   + retry_cost_multiplier   * p_fail * base
+#   + debug_overhead_per_cycle * expected_debug_cycles * base
+#   + escalation_probability  * p_fail * escalation_reference_burn
+#   + failure_penalty_weight  * p_fail * escalation_reference_burn
+#
+# base = provider.burn_weight * model.relative_model_burn * effort_burn_prior
+#
+# `escalation_reference_burn` is the cheapest base burn among configurations
+# that clear the required reliability, i.e. what it costs to redo the work
+# properly. Expressing both escalation and failure penalties against that
+# reference is what stops the router from over-powering cheap tasks: on a
+# trivial task the cost of being wrong is genuinely small.
+effective_burn:
+  retry_cost_multiplier: 0.9
+  debug_overhead_per_cycle: 0.35
+  debug_cycles_scale: 3.0
+  escalation_probability: 0.25
+  failure_penalty_weight: 1.5
+
+# --- 8. Learning influence ---------------------------------------------------
+# Historical outcomes adjust predicted reliability through a Beta posterior
+# whose prior is the model-computed reliability for THIS fingerprint.
+#
+#   alpha0 = prior_strength * r_prior
+#   beta0  = prior_strength * (1 - r_prior)
+#   posterior = (alpha0 + weighted_successes) / (prior_strength + weighted_attempts)
+#
+# prior_strength is measured in pseudo-observations: history reaches equal
+# weight with the prior at that many recency-weighted executions. 20 produces
+# the evidence bands the specification asks for as a smooth curve rather than
+# hard switches:
+#
+#   1 execution    ~5%  influence   prior dominates
+#   5 executions   20%              weak
+#   20 executions  50%              moderate
+#   50 executions  71%              strong
+#
+# It also bounds what a single import can do: one unexpected failure moves the
+# estimate by about four reliability points, which is visible without being
+# able to flip a recommendation on its own.
+learning:
+  prior_strength: 20.0
+  # No single import may move a recommendation more than this, in reliability
+  # points. Protects the router from one lucky or unlucky execution.
+  max_history_shift: 0.12
+  # Same shrinkage applied to learned effective burn and debug cycles.
+  burn_prior_strength: 8.0
+  debug_cycles_prior_strength: 8.0
+  # Evidence bands, used only for user-facing labelling.
+  evidence_bands:
+    none: 0
+    weak: 5
+    moderate: 20
+    strong: 50
+
+# --- 9. Recency weighting ----------------------------------------------------
+# Models change. Old evidence still counts, but less. Each executed task
+# contributes its weight to the statistics based on its age in days.
+recency_weights:
+  - { max_age_days: 30, weight: 1.00 }
+  - { max_age_days: 90, weight: 0.85 }
+  - { max_age_days: 180, weight: 0.65 }
+  - { max_age_days: 365, weight: 0.40 }
+  - { max_age_days: null, weight: 0.20 }
+
+# --- 10. Router confidence ---------------------------------------------------
+# Confidence in the RECOMMENDATION, which is not the same thing as predicted
+# reliability of the configuration.
+confidence:
+  base: 0.62
+  # How much the analyzer trusting itself matters.
+  analyzer_confidence_weight: 0.18
+  # Penalty scaled by fingerprint ambiguity.
+  ambiguity_penalty: 0.15
+  # Reward for having historical evidence for the selected configuration.
+  evidence_weight: 0.12
+  # Reward for the winner being clearly separated from the runner-up on burn.
+  separation_weight: 0.10
+  # Reward for clearing the reliability bar with room to spare.
+  margin_weight: 0.10
+  min: 0.05
+  max: 0.98
+  # Below this many recency-weighted executions the UI states plainly that the
+  # recommendation rests on base policy rather than measured evidence.
+  low_evidence_threshold: 5.0
+
+# --- 11. Overpowering detection ----------------------------------------------
+# Used by analytics to surface configurations that could be safely downgraded.
+overpowering:
+  # A cheaper configuration counts as an alternative if its measured reliability
+  # is within this many points of the expensive one.
+  reliability_tolerance: 0.02
+  # ...and it costs at most this fraction of the expensive one.
+  burn_ratio_threshold: 0.70
+  # Minimum recency-weighted executions on BOTH sides before we claim anything.
+  min_evidence: 5.0
+
+# --- 12. Explanation ---------------------------------------------------------
+explanation:
+  # A stronger alternative is only "worth mentioning" if it buys at least this
+  # much predicted reliability. Below it, the stronger option is pure waste.
+  meaningful_reliability_gain: 0.010

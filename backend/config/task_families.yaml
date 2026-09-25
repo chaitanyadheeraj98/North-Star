@@ -1,0 +1,169 @@
+# Adaptive LLM Router — Canonical Task Families
+#
+# These are the ONLY task_family values the system accepts. Pi receives these
+# definitions verbatim in the analyzer prompt so that the analyzer and the
+# backend share one vocabulary.
+#
+# Keep this list small. Historical statistics are partitioned by task family;
+# hundreds of families would fragment the evidence into uselessness.
+#
+# `required_reliability_adjustment` is an ADDITIVE nudge applied on top of the
+# risk-derived reliability requirement computed from the fingerprint itself.
+# It is an application policy prior, not a provider fact.
+
+schema_version: "1.0"
+
+families:
+
+  ui_cosmetic:
+    label: "UI Cosmetic"
+    definition: >
+      Purely visual changes with no behavioural consequence: colours, spacing,
+      copy text, icon swaps, class renames. Nothing downstream depends on the change.
+    required_reliability_adjustment: -0.020
+
+  ui_behavior:
+    label: "UI Behaviour"
+    definition: >
+      Front-end interaction logic: event handling, conditional rendering,
+      form behaviour, client-side validation, routing between views.
+    required_reliability_adjustment: -0.005
+
+  frontend_state:
+    label: "Frontend State"
+    definition: >
+      Client state management: stores, caches, derived state, synchronisation
+      between components, optimistic updates, stale-data handling.
+    required_reliability_adjustment: 0.000
+
+  api_implementation:
+    label: "API Implementation"
+    definition: >
+      Adding or modifying an HTTP/RPC endpoint: request parsing, response
+      shaping, status codes, serialization contracts.
+    required_reliability_adjustment: 0.000
+
+  backend_business_logic:
+    label: "Backend Business Logic"
+    definition: >
+      Domain rules, workflow transitions, calculations, eligibility logic.
+      Wrong output is wrong behaviour, but the data model is not at risk.
+    required_reliability_adjustment: 0.005
+
+  backend_data_integrity:
+    label: "Backend Data Integrity"
+    definition: >
+      Changes to identity, deduplication, provenance, uniqueness, referential
+      correctness or persistence semantics. Mistakes corrupt stored data and
+      are frequently irreversible.
+    required_reliability_adjustment: 0.020
+
+  database_schema:
+    label: "Database Schema"
+    definition: >
+      Table/column/index/constraint design and modification.
+    required_reliability_adjustment: 0.015
+
+  database_migration:
+    label: "Database Migration"
+    definition: >
+      Executable migrations that transform existing stored data, including
+      backfills and destructive column changes.
+    required_reliability_adjustment: 0.020
+
+  bug_fix_local:
+    label: "Bug Fix (Local)"
+    definition: >
+      A defect contained within one function or file, with a known reproduction
+      and an obvious blast radius.
+    required_reliability_adjustment: -0.005
+
+  bug_fix_cross_system:
+    label: "Bug Fix (Cross-System)"
+    definition: >
+      A defect whose cause and effect sit in different modules, services or
+      layers, requiring the fixer to hold several components in mind at once.
+    required_reliability_adjustment: 0.010
+
+  debugging:
+    label: "Debugging"
+    definition: >
+      Investigation work where the cause is not yet known and the task is to
+      find it, not merely to apply a known fix.
+    required_reliability_adjustment: 0.005
+
+  root_cause_analysis:
+    label: "Root Cause Analysis"
+    definition: >
+      Deep diagnosis of an intermittent, emergent or systemic failure where a
+      surface fix would be wrong.
+    required_reliability_adjustment: 0.015
+
+  performance:
+    label: "Performance"
+    definition: >
+      Latency, throughput, memory or query-cost work. Requires measurement
+      reasoning, not only code reasoning.
+    required_reliability_adjustment: 0.005
+
+  concurrency:
+    label: "Concurrency"
+    definition: >
+      Races, locking, idempotency, ordering, retries, distributed coordination.
+      Failures are non-deterministic and expensive to detect.
+    required_reliability_adjustment: 0.020
+
+  security:
+    label: "Security"
+    definition: >
+      Authentication, authorization, secrets handling, injection surfaces,
+      trust boundaries, cryptography usage.
+    required_reliability_adjustment: 0.020
+
+  testing:
+    label: "Testing"
+    definition: >
+      Writing or repairing tests, fixtures and harnesses. The production code
+      under test is not being changed.
+    required_reliability_adjustment: -0.010
+
+  refactor_local:
+    label: "Refactor (Local)"
+    definition: >
+      Behaviour-preserving restructuring inside one module: extraction,
+      renaming, simplification, dead-code removal.
+    required_reliability_adjustment: -0.005
+
+  refactor_architectural:
+    label: "Refactor (Architectural)"
+    definition: >
+      Behaviour-preserving restructuring that moves boundaries between modules
+      or services and touches many call sites.
+    required_reliability_adjustment: 0.015
+
+  architecture_design:
+    label: "Architecture Design"
+    definition: >
+      Producing a design, not an implementation: component boundaries,
+      data flow, trade-off analysis, migration strategy.
+    required_reliability_adjustment: 0.010
+
+  devops:
+    label: "DevOps"
+    definition: >
+      CI/CD pipelines, container images, deployment configuration,
+      infrastructure-as-code, build tooling.
+    required_reliability_adjustment: 0.005
+
+  documentation:
+    label: "Documentation"
+    definition: >
+      READMEs, API docs, comments, runbooks, changelogs. No behaviour changes.
+    required_reliability_adjustment: -0.035
+
+  repository_analysis:
+    label: "Repository Analysis"
+    definition: >
+      Explaining how existing code works, tracing a flow, or producing a map
+      of a subsystem. Read-only; nothing is modified.
+    required_reliability_adjustment: -0.015
