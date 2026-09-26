@@ -183,6 +183,20 @@ def test_an_out_of_range_capability_prior_is_rejected(scratch_dir):
         _bundle(directory, **{"models.yaml": mutate}).load()
 
 
+def test_an_enabled_model_with_all_zero_capability_priors_is_rejected(scratch_dir):
+    """All-zero is the placeholder update_models() seeds a brand-new model
+    with, never a real judgement - an enabled model claiming it is exactly
+    that placeholder is rejected the same way a missing review is."""
+    directory = scratch_dir
+
+    def mutate(data: dict) -> None:
+        model = data["providers"]["codex"]["models"]["sol"]
+        model["capability_priors"] = {dim: 0.0 for dim in model["capability_priors"]}
+
+    with pytest.raises(ConfigError, match="models.yaml is invalid"):
+        _bundle(directory, **{"models.yaml": mutate}).load()
+
+
 def test_an_affinity_pointing_at_an_unknown_model_is_rejected(scratch_dir):
     directory = scratch_dir
 

@@ -49,7 +49,7 @@ def test_full_loop_through_the_api(client):
     assert task_id.startswith("RT-")
     assert body["fingerprint"]["task_family"] == "backend_data_integrity"
 
-    decision = body["recommendation"]
+    decision = body["recommendation"]["codex"]
     assert decision["provider"] and decision["model"] and decision["effort"]
     assert decision["predicted_reliability"] >= decision["required_reliability"]
     assert decision["explanation"]["why"]
@@ -58,7 +58,7 @@ def test_full_loop_through_the_api(client):
     assert decision["fallback"] is not None
 
     # 2. The handoff carries the task id, which is the whole basis of learning.
-    handoff = client.get(f"/api/tasks/{task_id}/handoff").json()
+    handoff = client.get(f"/api/tasks/{task_id}/handoff?provider=codex").json()
     assert f"task_id={task_id}" in handoff["handoff"]
     assert f"recommended_provider={decision['provider']}" in handoff["handoff"]
     assert f"recommended_effort={decision['effort']}" in handoff["handoff"]
@@ -110,7 +110,7 @@ def test_full_loop_through_the_api(client):
     ).json()
     winner = next(
         s
-        for s in second["recommendation"]["evaluated"]
+        for s in second["recommendation"]["codex"]["evaluated"]
         if s["configuration"]["provider"] == decision["provider"]
         and s["configuration"]["model"] == decision["model"]
         and s["configuration"]["effort"] == decision["effort"]
@@ -176,7 +176,7 @@ def test_repeated_failure_pushes_the_estimate_down(client, config):
         engine = RoutingEngine(config.registry, config.policy, config.families)
         decision = engine.route(
             by_name("deduplication identity semantics").fingerprint, index.as_lookup()
-        )
+        ).codex
         punished = next(
             s
             for s in decision.evaluated
@@ -203,7 +203,7 @@ def test_repeated_success_on_a_cheaper_option_pushes_it_up(client, config):
         engine = RoutingEngine(config.registry, config.policy, config.families)
         decision = engine.route(
             by_name("deduplication identity semantics").fingerprint, index.as_lookup()
-        )
+        ).codex
         rewarded = next(
             s
             for s in decision.evaluated
@@ -250,7 +250,7 @@ def test_a_receipt_for_a_different_configuration_is_kept(client):
         "/api/tasks", json={"task": DATA_INTEGRITY_TASK, "analyzer": "heuristic"}
     ).json()
     task_id = created["public_task_id"]
-    recommended = created["recommendation"]
+    recommended = created["recommendation"]["codex"]
 
     # Deliberately run something else.
     other = ("codex", "luna", "low")
@@ -407,10 +407,11 @@ def test_service_layer_loop(session, config):
     )
     decision = routing_service.route_fingerprint(session, config, fingerprint)
     row = routing_service.store_decision(session, config, task, decision)
+    decision = decision.codex
     session.commit()
 
     assert task.public_task_id == "RT-000001"
-    assert row.provider == decision.provider
+    assert row.provider == "independent"
 
     from app.services.receipt_service import import_receipt
 
@@ -430,7 +431,7 @@ def test_service_layer_loop(session, config):
     assert session.query(Execution).count() == 1
     assert session.query(RoutingStatistic).one().attempts == 1
 
-    reloaded = routing_service.load_decision(row)
+    reloaded = routing_service.load_decision(row).codex
     assert reloaded.provider == decision.provider
     assert reloaded.explanation.why == decision.explanation.why
 
@@ -453,9 +454,9 @@ def test_a_stored_decision_survives_a_round_trip(client):
     task_id = created["public_task_id"]
 
     stored = client.get(f"/api/tasks/{task_id}/recommendation").json()
-    assert stored["provider"] == created["recommendation"]["provider"]
-    assert stored["explanation"]["why"] == created["recommendation"]["explanation"]["why"]
-    assert len(stored["evaluated"]) == len(created["recommendation"]["evaluated"])
+    assert stored["codex"]["provider"] == created["recommendation"]["codex"]["provider"]
+    assert stored["codex"]["explanation"]["why"] == created["recommendation"]["codex"]["explanation"]["why"]
+    assert len(stored["codex"]["evaluated"]) == len(created["recommendation"]["codex"]["evaluated"])
 
     fetched = client.get(f"/api/tasks/{task_id}").json()
-    assert fetched["handoff"] and json.dumps(fetched["fingerprint"])
+    assert fetched["handoffs"]["codex"] and json.dumps(fetched["fingerprint"])

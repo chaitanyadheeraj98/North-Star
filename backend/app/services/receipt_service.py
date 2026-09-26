@@ -39,6 +39,7 @@ from ..db.models import (
 from ..schemas.enums import OutcomeStatus, TaskStatus
 from ..schemas.execution_receipt import ExecutionReceipt, parse_receipt
 from .task_service import get_task
+from .routing_service import load_decision
 
 
 class ReceiptImportError(ValueError):
@@ -78,11 +79,15 @@ def import_receipt(
         )
 
     warnings: list[str] = []
-    decision = _latest_decision(session, task)
+    decision_row = _latest_decision(session, task)
 
     provider = receipt.execution.provider.strip().lower()
     model = receipt.execution.model.strip().lower()
     effort = receipt.execution.effort
+    recommendations = load_decision(decision_row) if decision_row else None
+    decision = recommendations.for_provider(provider) if recommendations else None
+    if decision is None and recommendations and recommendations.legacy:
+        decision = recommendations.for_provider(decision_row.provider)
 
     if not config.registry.supports(provider, model, effort):
         # Recorded anyway: a receipt naming a model that is disabled locally,
@@ -98,11 +103,11 @@ def import_receipt(
         decision
         and decision.provider == provider
         and decision.model == model
-        and decision.effort == effort.value
+        and decision.effort == effort
     )
     if decision and not recommendation_followed:
         warnings.append(
-            f"Recommendation was {decision.provider}/{decision.model}/{decision.effort}; "
+            f"Recommendation was {decision.provider}/{decision.model}/{decision.effort.value}; "
             f"you ran {provider}/{model}/{effort.value}. Recorded as a deviation, which is "
             "exactly the kind of evidence the router learns from."
         )
@@ -123,7 +128,7 @@ def import_receipt(
 
     execution = Execution(
         task_id=task.id,
-        routing_decision_id=decision.id if decision else None,
+        routing_decision_id=decision_row.id if decision_row else None,
         task_family=task_family,
         actual_provider=provider,
         actual_model=model,
@@ -204,7 +209,7 @@ def import_receipt(
         execution_id=execution.id,
         task_family=task_family,
         recommended=(
-            f"{decision.provider}/{decision.model}/{decision.effort}" if decision else None
+            f"{decision.provider}/{decision.model}/{decision.effort.value}" if decision else None
         ),
         actual=f"{provider}/{model}/{effort.value}",
         recommendation_followed=recommendation_followed,
@@ -294,12 +299,12 @@ def _estimate_burn(
     base = burn_mod.base_burn(provider, model, receipt.execution.effort, config.policy)
 
     # The escalation reference is what redoing the work properly would cost.
-    # Use the cheapest base burn seen in this family's history, falling back to
+    # Use the cheapest base burn in this family's same-provider history, falling back to
     # this configuration's own base when there is no history yet.
     index = build_evidence_index(session, config.policy, task_family=task_family)
     reference = base
     for (family, prov, mdl, eff), evidence in index.cells.items():
-        if family != task_family or evidence.weighted_attempts <= 0:
+        if family != task_family or prov != execution.actual_provider or evidence.weighted_attempts <= 0:
             continue
         candidate_provider = config.registry.provider(prov)
         candidate_model = config.registry.model(prov, mdl)

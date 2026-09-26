@@ -96,7 +96,10 @@ export function App() {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
-        {tab === 'router' && <RouterPage pi={pi} preferences={preferences} />}
+        {/* Hidden rather than unmounted so the task and result survive a tab switch. */}
+        <div hidden={tab !== 'router'}>
+          <RouterPage pi={pi} preferences={preferences} />
+        </div>
         {tab === 'result' && <ResultPage onImported={() => setReloadKey((k) => k + 1)} />}
         {tab === 'history' && <HistoryPage key={`history-${reloadKey}`} />}
         {tab === 'analytics' && <AnalyticsPage key={`analytics-${reloadKey}`} />}

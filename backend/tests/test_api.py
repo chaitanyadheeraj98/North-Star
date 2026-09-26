@@ -92,7 +92,7 @@ def test_recompute_uses_current_history(client):
         f"/api/tasks/{task_id}/recommendation", params={"recompute": True}
     )
     assert recomputed.status_code == 200
-    assert recomputed.json()["provider"] == created["recommendation"]["provider"]
+    assert recomputed.json() == created["recommendation"]
 
 
 def test_models_endpoint_states_its_provenance(client):

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Banner, Button, Card, Pill, SectionTitle, Spinner, Stat } from '../components/ui.tsx';
 import { ApiError, api } from '../lib/api.ts';
 import { effortLabel } from '../lib/format.ts';
-import { THINKING_LEVELS, type PiModelOption, type SettingsResponse } from '../lib/types.ts';
+import { THINKING_LEVELS, type PiModelOption, type ModelUpdateResult, type SettingsResponse } from '../lib/types.ts';
 
 export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
   const [data, setData] = useState<SettingsResponse | null>(null);
@@ -11,6 +11,8 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [update, setUpdate] = useState<ModelUpdateResult | null>(null);
 
   async function load() {
     try {
@@ -51,6 +53,24 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
       setNotice('Configuration reloaded from YAML.');
     } catch (err) {
       setError((err as ApiError).message);
+    }
+  }
+
+  async function updateModels() {
+    if (updating) return;
+    setUpdating(true);
+    setError(null);
+    setNotice(null);
+    setUpdate(null);
+    try {
+      const result = await api.updateModels();
+      setUpdate(result);
+      await load();
+      onChanged?.();
+    } catch (err) {
+      setError((err as ApiError).message);
+    } finally {
+      setUpdating(false);
     }
   }
 
@@ -188,10 +208,32 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
       <Card>
         <div className="flex items-start justify-between gap-4">
           <SectionTitle>Model registry</SectionTitle>
-          <Button variant="secondary" onClick={() => void reload()}>
-            Reload YAML
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={() => void updateModels()} disabled={updating}>
+              {updating ? 'Updating models...' : 'Update Models'}
+            </Button>
+            <Button variant="secondary" onClick={() => void reload()} disabled={updating}>
+              Reload YAML
+            </Button>
+          </div>
         </div>
+
+        <p className="mb-4 text-sm text-slate-400">
+          Fetch official OpenAI and Anthropic model information. Existing routing priors are
+          preserved. A new or never-reviewed model is researched and enabled automatically when
+          the Pi bridge is reachable; if Pi can&apos;t be reached it stays disabled with placeholder
+          priors until the next update.
+        </p>
+        {update && <div role="status" className="mb-4 space-y-2 text-sm text-slate-300">
+          <p>{update.status === 'updated' ? 'Models updated' : 'No model changes'} &middot; Registry {update.registry_version}</p>
+          <p>Added: {update.added.join(', ') || 'none'}</p>
+          <p>Changed: {update.changed.join(', ') || 'none'}</p>
+          {update.researched.length > 0 && <p>Researched and enabled: {update.researched.join(', ')}</p>}
+          {update.unconfirmed.length > 0 && <p>Not listed by these sources; preserved: {update.unconfirmed.join(', ')}</p>}
+          {update.backup && <p>Backup: {update.backup}</p>}
+          {update.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+          <p>Sources: {update.sources.map((source) => <a className="mr-3 underline" key={source} href={source} target="_blank" rel="noreferrer">{new URL(source).hostname}</a>)}</p>
+        </div>}
 
         <div className="space-y-5">
           {data.providers.map((provider) => (
@@ -234,7 +276,9 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
                           {model.relative_model_burn}
                         </td>
                         <td className="py-2">
-                          {model.enabled ? (
+                          {model.review_required ? (
+                            <Pill tone="amber">needs review</Pill>
+                          ) : model.enabled ? (
                             <Pill tone="emerald">enabled</Pill>
                           ) : (
                             <Pill tone="rose">disabled</Pill>
@@ -285,8 +329,8 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
           />
         </div>
         <p className="mt-4 text-xs text-slate-500">
-          Everything stays on this machine. No telemetry, no cloud database. The only external
-          model call is the one Pi makes through your own subscription.
+          Everything stays on this machine. No telemetry, no cloud database. Pi uses your subscription for task analysis. Update Models fetches public official
+          provider documentation without sending task text.
         </p>
       </Card>
     </div>

@@ -47,7 +47,15 @@ def app_env(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     from app.db import database
 
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
-    monkeypatch.setenv("CONFIG_DIR", str(BACKEND_ROOT / "config"))
+    # Update Models writes configuration. API tests must never touch the user's registry.
+    test_config = db_path.parent / "config"
+    shutil.copytree(BACKEND_ROOT / "config", test_config)
+    monkeypatch.setenv("CONFIG_DIR", str(test_config))
+    # Same reasoning: the research pass rewrites reference/*.md. Tests must
+    # never touch the real, git-tracked copies.
+    test_reference = db_path.parent / "reference"
+    shutil.copytree(BACKEND_ROOT.parent / "reference", test_reference)
+    monkeypatch.setenv("REFERENCE_DIR", str(test_reference))
     # Point at a port nothing listens on. The suite must behave identically
     # whether or not a real Pi bridge happens to be running on this machine;
     # tests that want a bridge stub it explicitly (see test_analyzer_config).

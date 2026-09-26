@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import RoutingDecisionRow, Task, TaskFingerprintRow
 from ..schemas.enums import TaskStatus
+from ..schemas.routing_decision import RoutingDecision
 
 HANDOFF_OPEN = "[LLM-ROUTER]"
 HANDOFF_CLOSE = "[/LLM-ROUTER]"
@@ -80,7 +81,7 @@ def fingerprint_row(session: Session, task: Task) -> TaskFingerprintRow | None:
 
 
 def build_handoff(
-    task: Task, decision: RoutingDecisionRow, router_version: str, model_id: str = ""
+    task: Task, decision: RoutingDecision, router_version: str, model_id: str = ""
 ) -> str:
     """The text the user pastes into Claude Code or the Codex CLI.
 
@@ -93,7 +94,7 @@ def build_handoff(
         f"task_id={task.public_task_id}",
         f"recommended_provider={decision.provider}",
         f"recommended_model={decision.model}",
-        f"recommended_effort={decision.effort}",
+        f"recommended_effort={decision.effort.value}",
     ]
     if model_id:
         lines.append(f"recommended_model_id={model_id}")

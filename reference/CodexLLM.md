@@ -1,17 +1,20 @@
-I checked the current OpenAI/Codex documentation for **September 17, 2026**. For Codex, there’s a very important distinction between **token count** and **how expensive those tokens are against your usage/credits**.
+I checked the current OpenAI/Codex documentation for **September 25, 2026**. For Codex, there’s a very important distinction between **token count** and **how expensive those tokens are against your usage/credits**.
 
 ### Codex model burn
 
-For the main models currently available in Codex, OpenAI's token-based credit rates are: ([OpenAI Help Center][1])
+For the main models currently available in Codex, the currently documented model catalog includes GPT-6 Astra, GPT-6 Sol, GPT-6 Luna, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, and GPT-5.5. Pricing is documented for the earlier GPT-5.6/Astra set in the existing notes; the supplied catalog lists the newer candidate models and supported effort levels but does not provide credit pricing for GPT-6 Sol, GPT-6 Luna, or GPT-5.5.
 
 | Codex model       | Input / 1M | Cached input / 1M | Output + reasoning / 1M | Relative output burn |
 | ----------------- | ---------: | ----------------: | ----------------------: | -------------------: |
+| **GPT-5.5**       |    unknown |           unknown |             **unknown** |              unknown |
 | **GPT-5.6 Luna**  |  5 credits |               0.5 |          **30 credits** |               **1×** |
 | **GPT-5.6 Terra** |         50 |                 5 |                 **300** |         **10× Luna** |
 | **GPT-5.6 Sol**   |        100 |                10 |                 **500** |       **16.7× Luna** |
+| **GPT-6 Luna**    |    unknown |           unknown |             **unknown** |              unknown |
+| **GPT-6 Sol**     |    unknown |           unknown |             **unknown** |              unknown |
 | **GPT-6 Astra**   |        250 |                25 |               **1,250** |       **41.7× Luna** |
 
-So in pure token-price terms:
+So in pure token-price terms for the models with supplied pricing:
 
 **Luna << Terra < Sol << Astra**
 
@@ -25,11 +28,10 @@ This is the important part.
 
 OpenAI explicitly says **reasoning tokens are hidden from the visible response but count as output usage**. So if a model spends 20,000 tokens internally thinking and only gives you 2,000 visible tokens, you're not merely consuming those 2,000 visible tokens—the reasoning tokens matter too. ([OpenAI Help Center][2])
 
-For GPT-5.6, the underlying reasoning controls support:
+For the currently supplied Codex catalog, the reasoning controls support:
 
 | Effort     | Reasoning usage                                   | Practical token burn        |
 | ---------- | ------------------------------------------------- | --------------------------- |
-| **None**   | Almost no deliberate reasoning                    | 🟢 Lowest                   |
 | **Low**    | Light reasoning                                   | 🟢 Low                      |
 | **Medium** | Normal reasoning                                  | 🟡 Moderate                 |
 | **High**   | More extensive reasoning                          | 🟠 High                     |
@@ -37,18 +39,18 @@ For GPT-5.6, the underlying reasoning controls support:
 | **Max**    | Maximum reasoning budget                          | 🔴🔴 Highest                |
 | **Ultra**  | Maximum reasoning + potentially additional agents | 🔴🔴🔴 Potentially enormous |
 
-GPT-5.6 Sol, Terra, and Luna support `none`, `low`, `medium`, `high`, `xhigh`, and `max`. GPT-6 Astra starts at `low` and supports through `max`. ([OpenAI Developers][3])
+The current catalog says GPT-6 Astra and GPT-6 Sol support `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`; GPT-6 Luna supports `low`, `medium`, `high`, `xhigh`, and `max`; GPT-5.5 supports `low`, `medium`, `high`, and `xhigh`.
 
-Codex can additionally expose **Ultra** for eligible users. OpenAI says Ultra can use maximum reasoning and may invoke additional agents, so its usage can be substantially higher depending on what those agents do. ([OpenAI Help Center][4])
+Codex can additionally expose **Ultra** for eligible models/users. OpenAI says Ultra can use maximum reasoning and may invoke additional agents, so its usage can be substantially higher depending on what those agents do. ([OpenAI Help Center][4])
 
 ### There is NO official multiplier for effort
 
 This is critical. OpenAI does **not** say:
 
 * Medium = 2× tokens
-* High = 3×
-* xHigh = 5×
-* Max = 10×
+* High = 3× tokens
+* xHigh = 5× tokens
+* Max = 10× tokens
 
 Those numbers would be made up.
 
@@ -64,12 +66,11 @@ So this is the useful practical matrix. The colors represent relative expected c
 
 | Model ↓ / Effort → | Low  | Medium | High | xHigh | Max    | Ultra  |
 | ------------------ | ---- | ------ | ---- | ----- | ------ | ------ |
-| **Luna**           | 🟢   | 🟢     | 🟢🟡 | 🟡    | 🟡🟠   | 🟠     |
+| **GPT-5.5**        | 🟢   | 🟢     | 🟢🟡 | 🟡    | —      | —      |
+| **Luna**           | 🟢   | 🟢     | 🟢🟡 | 🟡    | 🟡🟠   | —      |
 | **Terra**          | 🟢   | 🟢🟡   | 🟡   | 🟠    | 🔴     | 🔴🔴   |
 | **Sol**            | 🟢🟡 | 🟡     | 🟠   | 🔴    | 🔴🔴   | 🔴🔴🔴 |
 | **Astra**          | 🟡   | 🟠     | 🔴   | 🔴🔴  | 🔴🔴🔴 | 🔥🔥🔥 |
-
-Astra at Max/Ultra is therefore the combination I'd expect to eat through a Codex allowance fastest, while Luna Low/Medium is at the opposite end.
 
 ---
 
@@ -94,40 +95,9 @@ The catch is that **they won't necessarily consume the same number of tokens**. 
 
 OpenAI says a typical Codex task using **GPT-5.6 Sol may consume roughly 5–30 credits**, which gives you a useful real-world reference point. ([OpenAI Help Center][1])
 
----
+One especially important optimization: **cached input is 10× cheaper than normal input for the priced GPT-5.6/Astra models in these notes**. For example, Sol is 100 credits/M normal input but only **10 credits/M cached input**. So preserving context/cache efficiently can matter almost as much as model selection. ([OpenAI Help Center][1])
 
-# What I would use for coding
-
-For the kind of work you do—large repos, debugging workflows, database logic, architecture changes, and multi-file implementations—I'd treat the models like this:
-
-**Luna Medium** → trivial fixes, searches, explaining code, renaming, repetitive work.
-
-**Terra Medium/High** → normal implementation work. Probably the best choice when you care heavily about preserving your Codex quota.
-
-**Sol Medium** → stronger everyday coding.
-
-**Sol High** → difficult debugging and multi-file changes. This is probably the **sweet spot for serious development**.
-
-**Sol xHigh/Max** → hard root-cause investigations and architectural changes.
-
-**Astra High** → problems where Sol isn't reasoning deeply enough.
-
-**Astra xHigh/Max** → genuinely difficult, long-horizon work.
-
-**Ultra** → use selectively. Because it can invoke additional agents, this is where consumption can grow dramatically. ([OpenAI Help Center][4])
-
-### My suggested usage mix for your projects
-
-If you want to make your Codex allowance last:
-
-**Terra Medium/High → ~50% of tasks**
-**Sol Medium/High → ~40%**
-**Sol xHigh / Astra High → ~8%**
-**Astra Max/Ultra → ~2% hardest cases**
-
-One especially important optimization: **cached input is 10× cheaper than normal input for these models**. For example, Sol is 100 credits/M normal input but only **10 credits/M cached input**. So preserving context/cache efficiently can matter almost as much as model selection. ([OpenAI Help Center][1])
-
-And compared with the Claude research from your previous question, **Codex gives us more concrete consumption data** because OpenAI actually publishes the per-million-token credit rates and confirms that hidden reasoning counts toward output usage.
+And compared with the Claude research from your previous question, **Codex gives us more concrete consumption data for the priced models** because OpenAI publishes the per-million-token credit rates and confirms that hidden reasoning counts toward output usage.
 
 [1]: https://help.openai.com/en/articles/11481834?utm_source=chatgpt.com "ChatGPT Rate Card (Business, Enterprise/Edu credit-based pricing) | OpenAI Help Center"
 [2]: https://help.openai.com/en/articles/4936856-wha?utm_source=chatgpt.com "Understanding and counting tokens | OpenAI Help Center"
@@ -136,10 +106,13 @@ And compared with the Claude research from your previous question, **Codex gives
 
 Codex model token burn
 
-Official Codex credit rate per 1 million output tokens, including reasoning-token usage. Lower is more economical.
+Official Codex credit rate per 1 million output tokens, including reasoning-token usage where supplied. Lower is more economical.
 
 model credits
+GPT-5.5 unknown
 GPT-5.6 Luna 30
 GPT-5.6 Terra 300
 GPT-5.6 Sol 500
+GPT-6 Luna unknown
+GPT-6 Sol unknown
 GPT-6 Astra 1,250

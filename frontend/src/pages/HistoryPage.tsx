@@ -173,21 +173,23 @@ export function HistoryPage() {
                 </pre>
               </div>
 
-              {selected.recommendation && (
-                <div>
-                  <SectionTitle>Recommendation</SectionTitle>
-                  <p className="text-sm text-slate-300">
-                    {selected.recommendation.provider_display}{' '}
-                    {selected.recommendation.model_display} at{' '}
-                    {selected.recommendation.effort} effort, predicted{' '}
-                    {pct(selected.recommendation.predicted_reliability, 1)} against a{' '}
-                    {pct(selected.recommendation.required_reliability, 1)} requirement.
-                  </p>
-                  <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                    {selected.recommendation.explanation.why}
-                  </p>
-                </div>
-              )}
+              {selected.recommendation && (['codex', 'claude'] as const).map((provider) => {
+                const decision = selected.recommendation![provider];
+                return (
+                  <div key={provider}>
+                    <SectionTitle>{provider} recommendation</SectionTitle>
+                    {decision ? <>
+                      <p className="text-sm text-slate-300">
+                        {decision.model_display} at {decision.effort} effort, predicted{' '}
+                        {pct(decision.predicted_reliability, 1)} against a{' '}
+                        {pct(decision.required_reliability, 1)} requirement.
+                      </p>
+                      <p className="mt-2 text-sm text-slate-400">{decision.explanation.why}</p>
+                      <p className="mt-2 text-xs text-slate-500">Fallback: {decision.fallback_display ?? 'unavailable'}</p>
+                    </> : <p>{selected.recommendation!.unavailable[provider]}</p>}
+                  </div>
+                );
+              })}
 
               {selected.execution && (
                 <div>

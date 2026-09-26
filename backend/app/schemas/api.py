@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .routing_decision import RoutingDecision
+from .routing_decision import RoutingRecommendations
 from .task_fingerprint import TaskFingerprint
 
 
@@ -78,8 +78,8 @@ class TaskResponse(BaseModel):
 
     fingerprint: TaskFingerprint | None = None
     analyzer: AnalyzerInfo | None = None
-    recommendation: RoutingDecision | None = None
-    handoff: str | None = None
+    recommendation: RoutingRecommendations | None = None
+    handoffs: dict[str, str] = Field(default_factory=dict)
     execution: dict[str, Any] | None = None
 
 
@@ -129,6 +129,7 @@ class HistoryRow(BaseModel):
     recommended_model: str | None = None
     recommended_effort: str | None = None
     recommended_display: str | None = None
+    recommendations: dict[str, str] = Field(default_factory=dict)
 
     actual_provider: str | None = None
     actual_model: str | None = None

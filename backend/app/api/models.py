@@ -1,10 +1,4 @@
-"""Model registry and task family endpoints (read-only).
-
-The registry is edited in models.yaml, not through the API. Letting the UI
-write routing priors would put two sources of truth in the system, and the
-YAML comments explaining which numbers are sourced and which are assumptions
-would be the first casualty.
-"""
+"""Model registry reads, validated YAML reloads, and official model updates."""
 
 from __future__ import annotations
 
@@ -12,8 +6,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from ..config import ConfigBundle, ConfigError, get_config
-from .deps import ConfigDep
+from ..config import ConfigBundle, ConfigError, Settings
+from ..services.model_updater import ModelUpdateError, ModelUpdateResult, update_models
+from .deps import ConfigDep, SettingsDep
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -40,6 +35,8 @@ def list_models(config: ConfigBundle = ConfigDep) -> dict[str, Any]:
                     "source_pricing": model.source_pricing,
                     "capability_priors": model.capability_priors,
                     "notes": model.notes,
+                    "review_required": model.review_required,
+                    "source_urls": model.source_urls,
                     "base_burn_by_effort": {
                         effort.value: round(
                             provider.burn_weight
@@ -101,9 +98,8 @@ def list_task_families(config: ConfigBundle = ConfigDep) -> dict[str, Any]:
 
 
 @router.post("/reload")
-def reload_config() -> dict[str, str]:
+def reload_config(bundle: ConfigBundle = ConfigDep) -> dict[str, str]:
     """Re-read the YAML files after a hand edit, without restarting the container."""
-    bundle = get_config()
     try:
         bundle.load()
     except ConfigError as exc:
@@ -113,3 +109,13 @@ def reload_config() -> dict[str, str]:
         "registry_version": bundle.registry.registry_version,
         "router_version": bundle.policy.router_version,
     }
+
+
+@router.post("/update", response_model=ModelUpdateResult)
+def refresh_models(
+    config: ConfigBundle = ConfigDep, settings: Settings = SettingsDep
+) -> ModelUpdateResult:
+    try:
+        return update_models(config, settings)
+    except ModelUpdateError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

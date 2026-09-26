@@ -119,7 +119,7 @@ class RoutingDecisionRow(Base):
     predicted_burn: Mapped[float] = mapped_column(Float)
     threshold_met: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    #: Complete RoutingDecision, including every evaluated configuration, so a
+    #: Complete RoutingRecommendations (legacy rows contain RoutingDecision), so a
     #: past decision can be audited against a later version of the policy.
     explanation_json: Mapped[dict[str, Any]] = mapped_column(JSON)
 

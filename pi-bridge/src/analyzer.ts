@@ -47,14 +47,18 @@ export function buildSystemPrompt(families: Array<{ key: string; definition: str
   return cachedPrompt.replace('{{TASK_FAMILIES}}', block);
 }
 
-type AssistantLike = {
+// Exported for researcher.ts: reading the last assistant turn out of a Pi
+// session transcript has nothing analyzer-specific about it. What each caller
+// does when that turn failed differs (see assertTurnSucceeded below, kept
+// local because its error messages and error type ARE analyzer-specific).
+export type AssistantLike = {
   role?: string;
   content?: unknown;
   stopReason?: string;
   errorMessage?: string;
 };
 
-function lastAssistant(messages: readonly unknown[]): AssistantLike | undefined {
+export function lastAssistant(messages: readonly unknown[]): AssistantLike | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i] as AssistantLike;
     if (message?.role === 'assistant') return message;
@@ -62,7 +66,7 @@ function lastAssistant(messages: readonly unknown[]): AssistantLike | undefined 
   return undefined;
 }
 
-function assistantText(message: AssistantLike | undefined): string {
+export function assistantText(message: AssistantLike | undefined): string {
   if (!message) return '';
   const content = message.content;
   if (typeof content === 'string') return content;

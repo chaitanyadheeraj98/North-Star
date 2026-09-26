@@ -33,7 +33,7 @@ export function RouterPage({
   const [result, setResult] = useState<TaskResponse | null>(null);
   const [error, setError] = useState<{ message: string; detail?: unknown } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const [showDetails, setShowDetails] = useState(false);
+  const [showDetails, setShowDetails] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
   useEffect(() => () => { if (timer.current) window.clearInterval(timer.current); }, []);
@@ -47,7 +47,7 @@ export function RouterPage({
     setBusy(true);
     setError(null);
     setResult(null);
-    setShowDetails(false);
+    setShowDetails(null);
     setStage(0);
 
     timer.current = window.setInterval(
@@ -71,15 +71,15 @@ export function RouterPage({
     }
   }
 
-  async function copy(kind: 'handoff' | 'task') {
+  async function copy(kind: 'handoff' | 'task', provider: string) {
     if (!result) return;
-    const text = kind === 'handoff' ? (result.handoff ?? '') : result.original_task;
+    const text = kind === 'handoff' ? (result.handoffs[provider] ?? '') : result.original_task;
     const ok = await copyToClipboard(text);
-    setCopied(ok ? kind : 'failed');
+    setCopied(ok ? `${provider}-${kind}` : 'failed');
     window.setTimeout(() => setCopied(null), 2200);
   }
 
-  const decision = result?.recommendation ?? null;
+  const recommendations = result?.recommendation ?? null;
   const fingerprint = result?.fingerprint ?? null;
 
   return (
@@ -137,8 +137,14 @@ export function RouterPage({
         </Banner>
       )}
 
-      {result && decision && fingerprint && (
-        <>
+      {result && recommendations && fingerprint && (
+        <p className="text-sm text-slate-400">Independent recommendations. Choose which provider to use.</p>
+      )}
+      {result && recommendations && fingerprint && (['codex', 'claude'] as const).map((provider) => {
+        const decision = recommendations[provider];
+        if (!decision) return <Banner key={provider} tone="warn" title={titleCase(provider)}>{recommendations.unavailable[provider] ?? 'No recommendation available.'}</Banner>;
+        return (
+        <section key={provider} aria-label={`${decision.provider_display} recommendation`} className="space-y-4">
           <Card className="border-sky-900/60 bg-gradient-to-b from-sky-950/30 to-slate-900/60">
             <div className="flex flex-wrap items-start justify-between gap-6">
               <div>
@@ -181,7 +187,7 @@ export function RouterPage({
                 <Stat
                   label="Expected burn"
                   value={burn(decision.predicted_burn)}
-                  hint="normalised quota units"
+                  hint="provider-local burn units"
                 />
               </div>
             </div>
@@ -196,17 +202,16 @@ export function RouterPage({
             )}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <Button onClick={() => void copy('handoff')}>
-                {copied === 'handoff' ? 'Copied' : 'Copy handoff'}
+              <Button onClick={() => void copy('handoff', provider)}>
+                {copied === `${provider}-handoff` ? 'Copied' : `Copy ${decision.provider_display} handoff`}
               </Button>
-              <Button variant="secondary" onClick={() => void copy('task')}>
-                {copied === 'task' ? 'Copied' : 'Copy task only'}
+              <Button variant="secondary" onClick={() => void copy('task', provider)}>
+                {copied === `${provider}-task` ? 'Copied' : 'Copy task only'}
               </Button>
-              {decision.fallback_display && (
-                <span className="text-xs text-slate-500">
-                  Fallback: {decision.fallback_display}
-                </span>
-              )}
+              <span className="text-xs text-slate-500">
+                Fallback: {decision.fallback_display ?? 'No other configuration available'}
+                {decision.fallback_threshold_met === false && ' — below required reliability'}
+              </span>
               {copied === 'failed' && (
                 <span className="text-xs text-rose-300">
                   The browser blocked clipboard access. Select the handoff below and copy manually.
@@ -239,17 +244,17 @@ export function RouterPage({
           <Card>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-slate-400">{decision.explanation.evidence_note}</p>
-              <Button variant="ghost" onClick={() => setShowDetails((value) => !value)}>
-                {showDetails ? 'Hide details' : 'Show the arithmetic'}
+              <Button variant="ghost" onClick={() => setShowDetails((value) => value === provider ? null : provider)}>
+                {showDetails === provider ? 'Hide details' : 'Show the arithmetic'}
               </Button>
             </div>
 
-            {showDetails && (
+            {showDetails === provider && (
               <div className="mt-5 space-y-6 border-t border-slate-800 pt-5">
                 <div>
                   <SectionTitle>Handoff</SectionTitle>
                   <pre className="max-h-56 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
-                    {result.handoff}
+                    {result.handoffs[provider]}
                   </pre>
                 </div>
 
@@ -356,7 +361,7 @@ export function RouterPage({
                     </table>
                   </div>
                   <p className="mt-3 text-xs text-slate-500">
-                    Burn is in normalised quota units, not currency, and is an estimate rather
+                    Burn is in provider-local burn units, not currency, and is an estimate rather
                     than a measurement. Effort intensity uses this application's own routing
                     priors; neither provider publishes a fixed token multiplier per effort level.
                   </p>
@@ -364,8 +369,9 @@ export function RouterPage({
               </div>
             )}
           </Card>
-        </>
-      )}
+        </section>
+        );
+      })}
     </div>
   );
 }

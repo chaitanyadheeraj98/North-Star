@@ -4,8 +4,8 @@
 
 A local-first web application that answers one question:
 
-> Given this coding task, should I use Claude or Codex, which model, and how
-> much reasoning effort?
+> Given this coding task, which model and reasoning effort should I use
+> within Codex, and which should I use within Claude?
 
 It then learns from what actually happened, so the next answer is better.
 
@@ -66,7 +66,7 @@ TASK
  ↓
 Pi classifies it into a structured TaskFingerprint
  ↓
-Deterministic backend picks provider + model + effort
+Deterministic backend picks model + effort independently for each provider
  ↓
 You copy the handoff into Claude Code or the Codex CLI
  ↓
@@ -303,7 +303,7 @@ stronger?**, and a **Show the arithmetic** toggle that reveals the fingerprint,
 the reason codes, and every configuration that was considered with its
 reliability and burn.
 
-4. Press **Copy handoff**. You get:
+4. Choose a provider and press **Copy Codex handoff** or **Copy Claude handoff**. You get:
 
 ```
 [LLM-ROUTER]
@@ -367,7 +367,8 @@ evidence the system can get.
 
 ## 9. How the routing works
 
-Eight steps, all deterministic:
+Eight steps, all deterministic, run independently within each provider.
+There is no cross-provider winner, quota lookup, or subscription-credit check:
 
 1. **Enumerate** every enabled provider × model × effort combination (37 by
    default).
@@ -403,21 +404,19 @@ Eight steps, all deterministic:
 8. **Take the lowest total.** If nothing clears the bar, take the most reliable
    option and say so plainly on screen.
 
-Worked example, from the data-integrity task above:
+Both provider results include a recommendation, reasoning effort, fallback, and
+explanation. The same fingerprint, reliability threshold, and historical evidence
+are used, but escalation costs, candidate rankings, and fallbacks stay within the
+provider. The user chooses which handoff to copy. A fallback below the required
+reliability is labelled; a provider with no routable configuration is unavailable.
 
-| Configuration | Reliability | Effective burn | Eligible |
-| --- | --- | --- | --- |
-| Terra medium | 77.5% | 2.86 | no |
-| Sol low | 92.7% | 2.22 | no |
-| **Opus 5 low** | **96.1%** | **2.86** | **selected** |
-| Sol high | 96.9% | 3.31 | yes, but costlier |
-| Astra high | 98.8% | 7.73 | yes, but far costlier |
-
-Required: 95.7%. Sol low is the cheapest thing on the board but misses the bar,
-and its low price is exactly why it is dangerous here — the expected cost of
-retrying and escalating after it fails exceeds what Opus costs outright. Sol
-high clears the bar but costs more than Opus low. Opus low is the minimum
-sufficient configuration.
+The API returns `recommendation.codex` and `recommendation.claude`, with separate
+`handoffs.codex` and `handoffs.claude`. `GET /api/tasks/{id}/handoff` requires
+`?provider=codex` or `?provider=claude` for new decisions. Both decisions are stored
+in the existing JSON column; legacy summary columns use `provider=independent`
+and empty/zero placeholders, not an overall winner. Older decisions remain
+readable and are marked `legacy`; missing historical recommendations are not
+invented. Receipts compare against the recommendation for the executed provider.
 
 ### About the numbers
 
@@ -512,16 +511,40 @@ curl -X POST http://localhost:8000/api/models/reload
 or press **Reload YAML** on the Settings page. Invalid config is rejected with a
 specific message and the previous config keeps running.
 
+### Update Models
+
+Settings **Update Models** calls `POST /api/models/update`. The separate updater
+reads only [OpenAI's Codex model catalog](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json),
+[Anthropic's model overview](https://platform.claude.com/docs/en/models/overview), and
+[Anthropic's effort documentation](https://platform.claude.com/docs/en/build-with-claude/effort).
+It validates source formats, model identities, effort values, and the candidate
+against the routing policy before writing. Redirects, malformed data, empty
+catalogs, and updates that remove a provider's last routable configuration fail.
+
+A changed registry receives a patch-version increment and an exact backup beside
+`models.yaml`. Replacement is atomic; a reload failure restores the original file
+and retains the loaded configuration. An unchanged registry is not rewritten.
+Updates and manual reloads are serialized in the single backend worker used by
+Docker Compose. Multiple backend workers require shared locking and cache reloads.
+
+Existing keys, enabled states, capability priors, and burn priors of
+already-reviewed models are preserved. Missing models are reported as
+unconfirmed and retained. A new or never-reviewed model is additionally handed
+to the local Pi bridge, grounded in the same fetched documents plus the
+existing registry as calibration anchors, and Pi derives its capability
+priors and rewrites `reference/ClaudeLLM.md`/`CodexLLM.md` to match - the same
+research a person would otherwise do by hand. A model Pi successfully scores
+with confirmed effort support is enabled automatically; if Pi is unreachable,
+or a model's effort support is still unconfirmed, it stays disabled with
+placeholder priors, with a warning, until a later update can retry it. The
+updater never invents a capability score itself - either you set one by hand
+in YAML, or Pi derives one from the official documentation; nothing here
+guesses from marketing text.
+
 ### Things worth tuning
 
-**`burn_weight`** (per provider, in `models.yaml`). Model burn is normalised
-within each provider against its workhorse model — Claude Sonnet 5, Codex
-Terra — because quota is consumed against two separate subscriptions that
-cannot honestly be converted into one another. `burn_weight` is the exchange
-rate between them. Both default to 1.0, meaning "one Sonnet-equivalent unit of
-Claude quota is worth the same to me as one Terra-equivalent unit of Codex
-quota". If your Claude quota is scarcer than your Codex quota, raise Claude's
-weight and the router will lean toward Codex.
+**`burn_weight`** scales burn within a provider. Providers are evaluated
+independently; changing Claude's weight cannot affect the Codex recommendation.
 
 **`effort_policy.disabled_efforts`.** Defaults to `[none, ultra]`. `none`
 disables deliberate reasoning entirely, which is unsuitable for agentic coding.
@@ -770,10 +793,15 @@ Everything stays on this machine.
 
 - No cloud database. One SQLite file in `./data`.
 - No telemetry. No analytics. Nothing is reported anywhere.
-- The only external network call is the one Pi makes to your own subscription
-  provider, to classify the task text you pasted.
-- The reference documents in `reference/` seeded the registry once. They are not
-  re-read on every task and are not sent anywhere.
+- Pi calls your subscription provider to classify task text.
+- Update Models fetches public official model information without sending task
+  text, history, credentials, or files. For a never-reviewed model, the fetched
+  documents and the existing registry are additionally sent to the local Pi
+  bridge, on loopback, for capability research - never to a third party. Pi
+  retains its no-tools security model for this too.
+- The reference documents in `reference/` seeded the registry originally by
+  hand, and are re-read and rewritten by that same research pass on later
+  updates. They are not read on every task, only during Update Models.
 
 Task text may contain proprietary code details. It is stored locally and sent
 only to the analyzer, through your own subscription.
@@ -791,9 +819,8 @@ Deliberately not built in V1:
 - **No automatic receipt ingestion.** You copy a handoff out and paste a receipt
   back. Automating that needs CLI or IDE integration.
 - **No automatic execution.** The router recommends; you run it.
-- **Cross-provider burn is an assumption.** `burn_weight` defaults to 1.0/1.0
-  and is a stated, editable exchange rate between two subscriptions, not a
-  measurement.
+- **Model updates require review for new models.** Discovery cannot establish
+  capability priors. New entries remain disabled until reviewed.
 - **Effort priors are priors.** Neither provider publishes fixed multipliers.
   Historical data corrects them over time; the priors themselves never
   self-update.
