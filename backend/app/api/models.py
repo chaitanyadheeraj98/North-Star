@@ -6,9 +6,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from ..config import ConfigBundle, ConfigError
+from ..config import ConfigBundle, ConfigError, Settings
 from ..services.model_updater import ModelUpdateError, ModelUpdateResult, update_models
-from .deps import ConfigDep
+from .deps import ConfigDep, SettingsDep
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -112,8 +112,10 @@ def reload_config(bundle: ConfigBundle = ConfigDep) -> dict[str, str]:
 
 
 @router.post("/update", response_model=ModelUpdateResult)
-def refresh_models(config: ConfigBundle = ConfigDep) -> ModelUpdateResult:
+def refresh_models(
+    config: ConfigBundle = ConfigDep, settings: Settings = SettingsDep
+) -> ModelUpdateResult:
     try:
-        return update_models(config)
+        return update_models(config, settings)
     except ModelUpdateError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

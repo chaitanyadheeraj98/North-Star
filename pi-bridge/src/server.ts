@@ -18,6 +18,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
 import { AnalyzerFailure, analyzeTask } from './analyzer.ts';
+import type { ResearchRequestBody } from './capability-research.ts';
 import {
   AnalyzerConfigError,
   bootConfig,
@@ -37,6 +38,7 @@ import {
   type PiRuntime,
   type Resolution,
 } from './pi.ts';
+import { ResearchFailure, researchModels } from './researcher.ts';
 
 const VERSION = '1.1.0';
 
@@ -297,6 +299,81 @@ async function handleAnalyze(req: IncomingMessage, res: ServerResponse): Promise
   }
 }
 
+/**
+ * Score a batch of never-reviewed models, grounded in official docs and the
+ * existing registry. Reuses the SAME configured analyzer as /analyze - no
+ * separate model choice or credential path for research versus classification.
+ */
+async function handleResearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    send(res, 400, { error: `invalid request body: ${(error as Error).message}` });
+    return;
+  }
+
+  const payload = body as Partial<ResearchRequestBody>;
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates : null;
+  if (!candidates || candidates.length === 0) {
+    send(res, 400, { error: 'field "candidates" is required and must be a non-empty array' });
+    return;
+  }
+
+  const current = await currentResolution({});
+  if ('error' in current) {
+    console.error(`research rejected: ${current.error}`);
+    send(res, 400, { error: current.error, detail: current.detail });
+    return;
+  }
+
+  const { resolution } = current;
+  if (!resolution.ok) {
+    console.error(`research unavailable: ${resolution.failure.code}`);
+    send(res, 503, {
+      error: resolution.failure.message,
+      detail: resolution.failure.detail,
+      code: resolution.failure.code,
+      alternatives: resolution.failure.alternatives,
+    });
+    return;
+  }
+
+  const requestBody: ResearchRequestBody = {
+    candidates,
+    registry_anchors: Array.isArray(payload.registry_anchors) ? payload.registry_anchors : [],
+    claude_docs_text: typeof payload.claude_docs_text === 'string' ? payload.claude_docs_text : undefined,
+    codex_catalog: Array.isArray(payload.codex_catalog) ? payload.codex_catalog : undefined,
+    claude_reference_md:
+      typeof payload.claude_reference_md === 'string' ? payload.claude_reference_md : null,
+    codex_reference_md:
+      typeof payload.codex_reference_md === 'string' ? payload.codex_reference_md : null,
+  };
+
+  try {
+    const { result, researcher } = await researchModels(runtime!, resolution.analyzer, requestBody);
+    console.log(
+      `research ok  ${researcher.provider}/${researcher.model} (${researcher.thinking_level}) ` +
+        `candidates=${requestBody.candidates.length} repaired=${researcher.repaired} ${researcher.duration_ms}ms`,
+    );
+    send(res, 200, { ...result, researcher });
+  } catch (error) {
+    if (error instanceof ResearchFailure) {
+      console.error(`research failed: ${error.message} :: ${error.detail}`);
+      send(res, 422, { error: error.message, detail: error.detail });
+      return;
+    }
+    if (error instanceof PiUnavailable) {
+      console.error(`research unavailable: ${error.message}`);
+      send(res, 503, { error: error.message, detail: error.detail });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`research error: ${message}`);
+    send(res, 500, { error: 'The researcher failed.', detail: message });
+  }
+}
+
 function handleProviders(res: ServerResponse): void {
   if (!runtime) {
     send(res, 200, { providers: [] });
@@ -344,6 +421,9 @@ const server = createServer((req, res) => {
       return;
     case 'POST /analyze':
       void handleAnalyze(req, res);
+      return;
+    case 'POST /research':
+      void handleResearch(req, res);
       return;
     case 'GET /providers':
       handleProviders(res);

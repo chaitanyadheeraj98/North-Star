@@ -36,6 +36,9 @@ services:
       # Config is mounted so routing.yaml and models.yaml can be edited on the
       # host and applied with POST /api/models/reload, no rebuild needed.
       - ./backend/config:/app/config
+      # Same reasoning: Update Models' research pass rewrites these, and the
+      # rewrite must land on the host's git-tracked copies, not the container.
+      - ./reference:/app/reference
     extra_hosts:
       # Docker Desktop provides host.docker.internal automatically; this line is
       # what makes the same compose file work on Linux, where it does not.

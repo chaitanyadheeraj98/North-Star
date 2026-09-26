@@ -1,7 +1,9 @@
-# Official metadata refreshed by Update Models. Capability and burn priors are local assumptions.
-# New models remain disabled until their priors are reviewed. See source_urls for provenance.
+# Official metadata refreshed by Update Models. Capability and burn priors are
+# local assumptions: either set by hand, or, for a never-reviewed model, derived
+# by a local Pi research pass grounded in official docs (see source_urls). A model
+# Pi could not research yet stays disabled with placeholder priors; see reference/.
 schema_version: '1.0'
-registry_version: 1.0.1
+registry_version: 1.0.2
 providers:
   claude:
     enabled: true
@@ -15,7 +17,8 @@ providers:
         model_id: claude-haiku-4-5
         enabled: true
         supported_efforts:
-        - none
+        - low
+        - medium
         relative_model_burn: 0.5
         source_pricing:
           input_per_1m_usd: 1.0
@@ -120,31 +123,31 @@ providers:
       claude_opus_5_5:
         display_name: Claude Opus 5.5
         model_id: claude-opus-5-5
-        enabled: false
+        enabled: true
         supported_efforts:
         - low
         - medium
         - high
         - xhigh
         - max
-        relative_model_burn: 5.0
+        relative_model_burn: 2.0
         source_pricing:
           input_per_1m_usd: 4.0
           output_per_1m_usd: 20.0
         capability_priors:
-          coding: 0.0
-          debugging: 0.0
-          architecture: 0.0
-          database: 0.0
-          concurrency: 0.0
-          security: 0.0
-          repository_understanding: 0.0
+          coding: 0.955
+          debugging: 0.955
+          architecture: 0.955
+          database: 0.94
+          concurrency: 0.93
+          security: 0.94
+          repository_understanding: 0.955
         notes: Discovered from official sources. Disabled pending review of capability
           and burn priors; zero capability values are placeholders, not measurements.
         source_urls:
         - https://platform.claude.com/docs/en/models/overview.md
         - https://platform.claude.com/docs/en/build-with-claude/effort.md
-        review_required: true
+        review_required: false
   codex:
     enabled: true
     display_name: Codex
@@ -267,7 +270,7 @@ providers:
       gpt_6_sol:
         display_name: GPT-6-Sol
         model_id: gpt-6-sol
-        enabled: false
+        enabled: true
         supported_efforts:
         - low
         - medium
@@ -278,22 +281,22 @@ providers:
         relative_model_burn: 4.167
         source_pricing: {}
         capability_priors:
-          coding: 0.0
-          debugging: 0.0
-          architecture: 0.0
-          database: 0.0
-          concurrency: 0.0
-          security: 0.0
-          repository_understanding: 0.0
+          coding: 0.955
+          debugging: 0.95
+          architecture: 0.925
+          database: 0.925
+          concurrency: 0.915
+          security: 0.92
+          repository_understanding: 0.935
         notes: Discovered from official sources. Disabled pending review of capability
           and burn priors; zero capability values are placeholders, not measurements.
         source_urls:
         - https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json
-        review_required: true
+        review_required: false
       gpt_6_luna:
         display_name: GPT-6-Luna
         model_id: gpt-6-luna
-        enabled: false
+        enabled: true
         supported_efforts:
         - low
         - medium
@@ -303,22 +306,22 @@ providers:
         relative_model_burn: 4.167
         source_pricing: {}
         capability_priors:
-          coding: 0.0
-          debugging: 0.0
-          architecture: 0.0
-          database: 0.0
-          concurrency: 0.0
-          security: 0.0
-          repository_understanding: 0.0
+          coding: 0.8
+          debugging: 0.74
+          architecture: 0.66
+          database: 0.68
+          concurrency: 0.62
+          security: 0.66
+          repository_understanding: 0.69
         notes: Discovered from official sources. Disabled pending review of capability
           and burn priors; zero capability values are placeholders, not measurements.
         source_urls:
         - https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json
-        review_required: true
+        review_required: false
       gpt_5_5:
         display_name: GPT-5.5
         model_id: gpt-5.5
-        enabled: false
+        enabled: true
         supported_efforts:
         - low
         - medium
@@ -327,18 +330,18 @@ providers:
         relative_model_burn: 4.167
         source_pricing: {}
         capability_priors:
-          coding: 0.0
-          debugging: 0.0
-          architecture: 0.0
-          database: 0.0
-          concurrency: 0.0
-          security: 0.0
-          repository_understanding: 0.0
+          coding: 0.66
+          debugging: 0.58
+          architecture: 0.49
+          database: 0.52
+          concurrency: 0.45
+          security: 0.49
+          repository_understanding: 0.52
         notes: Discovered from official sources. Disabled pending review of capability
           and burn priors; zero capability values are placeholders, not measurements.
         source_urls:
         - https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json
-        review_required: true
+        review_required: false
 effort_policy:
   disabled_efforts:
   - none

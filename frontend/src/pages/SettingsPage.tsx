@@ -220,12 +220,15 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
 
         <p className="mb-4 text-sm text-slate-400">
           Fetch official OpenAI and Anthropic model information. Existing routing priors are
-          preserved. New models stay disabled until their capability and burn priors are reviewed.
+          preserved. A new or never-reviewed model is researched and enabled automatically when
+          the Pi bridge is reachable; if Pi can&apos;t be reached it stays disabled with placeholder
+          priors until the next update.
         </p>
         {update && <div role="status" className="mb-4 space-y-2 text-sm text-slate-300">
           <p>{update.status === 'updated' ? 'Models updated' : 'No model changes'} &middot; Registry {update.registry_version}</p>
           <p>Added: {update.added.join(', ') || 'none'}</p>
           <p>Changed: {update.changed.join(', ') || 'none'}</p>
+          {update.researched.length > 0 && <p>Researched and enabled: {update.researched.join(', ')}</p>}
           {update.unconfirmed.length > 0 && <p>Not listed by these sources; preserved: {update.unconfirmed.join(', ')}</p>}
           {update.backup && <p>Backup: {update.backup}</p>}
           {update.warnings.map((warning) => <p key={warning}>{warning}</p>)}

@@ -111,6 +111,8 @@ export type ModelUpdateResult = {
   added: string[];
   changed: string[];
   unconfirmed: string[];
+  /** Never-reviewed models auto-enabled this cycle by the Pi research pass. */
+  researched: string[];
   warnings: string[];
   sources: string[];
   backup: string | null;

@@ -527,12 +527,19 @@ and retains the loaded configuration. An unchanged registry is not rewritten.
 Updates and manual reloads are serialized in the single backend worker used by
 Docker Compose. Multiple backend workers require shared locking and cache reloads.
 
-Existing keys, enabled states, capability priors, and burn priors are preserved.
-Missing models are reported as unconfirmed and retained. New entries are disabled
-with `review_required: true`, zero capability placeholders, and conservative burn
-placeholders. Review their priors and effort support in YAML, set
-`review_required: false` and `enabled: true`, then use **Reload YAML**. The updater
-never infers capability from marketing text and does not call Pi or another LLM.
+Existing keys, enabled states, capability priors, and burn priors of
+already-reviewed models are preserved. Missing models are reported as
+unconfirmed and retained. A new or never-reviewed model is additionally handed
+to the local Pi bridge, grounded in the same fetched documents plus the
+existing registry as calibration anchors, and Pi derives its capability
+priors and rewrites `reference/ClaudeLLM.md`/`CodexLLM.md` to match - the same
+research a person would otherwise do by hand. A model Pi successfully scores
+with confirmed effort support is enabled automatically; if Pi is unreachable,
+or a model's effort support is still unconfirmed, it stays disabled with
+placeholder priors, with a warning, until a later update can retry it. The
+updater never invents a capability score itself - either you set one by hand
+in YAML, or Pi derives one from the official documentation; nothing here
+guesses from marketing text.
 
 ### Things worth tuning
 
@@ -788,9 +795,13 @@ Everything stays on this machine.
 - No telemetry. No analytics. Nothing is reported anywhere.
 - Pi calls your subscription provider to classify task text.
 - Update Models fetches public official model information without sending task
-  text, history, credentials, or files. Pi retains its no-tools security model.
-- The reference documents in `reference/` seeded the registry once. They are not
-  re-read on every task and are not sent anywhere.
+  text, history, credentials, or files. For a never-reviewed model, the fetched
+  documents and the existing registry are additionally sent to the local Pi
+  bridge, on loopback, for capability research - never to a third party. Pi
+  retains its no-tools security model for this too.
+- The reference documents in `reference/` seeded the registry originally by
+  hand, and are re-read and rewritten by that same research pass on later
+  updates. They are not read on every task, only during Update Models.
 
 Task text may contain proprietary code details. It is stored locally and sent
 only to the analyzer, through your own subscription.

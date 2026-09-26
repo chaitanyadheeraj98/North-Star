@@ -22,8 +22,18 @@ COPY config ./config
 # checkout with an empty ./data still starts.
 RUN mkdir -p /app/data
 
+# reference/ lives one level above this build context (./backend), so it
+# cannot be COPYed the way config/ is - only an empty mount point here.
+# docker-compose.yml mounts the repo's reference/ over this at runtime, which
+# is what lets Update Models' research pass land its rewrites on the host's
+# git-tracked ClaudeLLM.md/CodexLLM.md. Without that mount (e.g. `docker run`
+# on the bare image) the directory is simply empty, and Update Models degrades
+# to writing no reference docs rather than failing.
+RUN mkdir -p /app/reference
+
 ENV DATABASE_URL=sqlite:////app/data/router.db \
     CONFIG_DIR=/app/config \
+    REFERENCE_DIR=/app/reference \
     PI_BRIDGE_URL=http://host.docker.internal:31415
 
 EXPOSE 8000

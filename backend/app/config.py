@@ -29,6 +29,7 @@ class Settings:
 
     database_url: str
     config_dir: Path
+    reference_dir: Path
     pi_bridge_url: str
     pi_timeout_seconds: float
     cors_origins: tuple[str, ...]
@@ -37,6 +38,13 @@ class Settings:
     @staticmethod
     def from_env() -> Settings:
         config_dir = Path(os.getenv("CONFIG_DIR", str(_BACKEND_ROOT / "config"))).resolve()
+        # Where reference/ClaudeLLM.md and CodexLLM.md live. Plain documentation,
+        # not part of ConfigBundle: nothing at runtime parses these files except
+        # the model-research pass in model_updater.py, which reads and rewrites
+        # them as free text, not as structured config.
+        reference_dir = Path(
+            os.getenv("REFERENCE_DIR", str(_BACKEND_ROOT.parent / "reference"))
+        ).resolve()
 
         default_db = (_BACKEND_ROOT.parent / "data" / "router.db").as_posix()
         database_url = os.getenv("DATABASE_URL", f"sqlite:///{default_db}")
@@ -48,6 +56,7 @@ class Settings:
         return Settings(
             database_url=database_url,
             config_dir=config_dir,
+            reference_dir=reference_dir,
             pi_bridge_url=os.getenv("PI_BRIDGE_URL", "http://127.0.0.1:31415").rstrip("/"),
             pi_timeout_seconds=float(os.getenv("PI_TIMEOUT_SECONDS", "180")),
             cors_origins=tuple(o.strip() for o in origins.split(",") if o.strip()),

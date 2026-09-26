@@ -54,6 +54,13 @@ class ModelEntry(BaseModel):
                 raise ValueError(f"unknown capability dimension {dim!r}")
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"capability prior {dim}={value} is outside [0, 1]")
+        # All-zero is the placeholder value update_models() seeds a newly
+        # discovered model with, never a real judgement. This is the same rule
+        # as the review_required check above, just closing the gap where a
+        # hand-edit could set enabled: true and review_required: false without
+        # ever actually filling in scores.
+        if self.enabled and all(v == 0.0 for v in self.capability_priors.values()):
+            raise ValueError("enabled models cannot have all-zero (placeholder) capability priors")
         if len(set(self.supported_efforts)) != len(self.supported_efforts):
             raise ValueError("supported_efforts contains duplicates")
         return self

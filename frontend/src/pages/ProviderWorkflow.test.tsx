@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 
+import { App } from '../App.tsx';
 import { ApiError, api } from '../lib/api.ts';
 import type { RoutingDecision, SettingsResponse } from '../lib/types.ts';
 import { RouterPage } from './RouterPage.tsx';
@@ -71,13 +72,15 @@ it('updates models from Settings, refreshes state, and displays the result', asy
   vi.spyOn(api, 'piModels').mockResolvedValue({ models: [] });
   const update = vi.spyOn(api, 'updateModels').mockResolvedValue({
     status: 'updated', registry_version: '1.0.1', added: ['codex/new-model'], changed: [],
-    unconfirmed: ['claude/older-model'], warnings: [], sources: [], backup: 'models.1.0.0.yaml.bak',
+    unconfirmed: ['claude/older-model'], researched: ['codex/new-model'], warnings: [], sources: [],
+    backup: 'models.1.0.0.yaml.bak',
   });
   const changed = vi.fn();
   render(<SettingsPage onChanged={changed} />);
   await user.click(await screen.findByRole('button', { name: 'Update Models' }));
   expect(await screen.findByRole('status')).toHaveTextContent('Models updated');
   expect(screen.getByRole('status')).toHaveTextContent('codex/new-model');
+  expect(screen.getByRole('status')).toHaveTextContent('Researched and enabled: codex/new-model');
   expect(screen.getByRole('status')).toHaveTextContent('models.1.0.0.yaml.bak');
   expect(update).toHaveBeenCalledOnce();
   await waitFor(() => expect(changed).toHaveBeenCalledOnce());
@@ -93,4 +96,16 @@ it('shows an update failure and enables retry', async () => {
   await user.click(await screen.findByRole('button', { name: 'Update Models' }));
   expect(await screen.findByText('Original registry restored.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Update Models' })).toBeEnabled();
+});
+
+it('keeps the task when switching tabs', async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, 'settings').mockResolvedValue(settings());
+  vi.spyOn(api, 'piModels').mockResolvedValue({ models: [] });
+  render(<App />);
+  await user.type(screen.getByLabelText(/what do you want/i), 'Fix the bug');
+  await user.click(screen.getByRole('button', { name: 'settings' }));
+  await screen.findByRole('button', { name: 'Update Models' });
+  await user.click(screen.getByRole('button', { name: 'router' }));
+  expect(screen.getByLabelText(/what do you want/i)).toHaveValue('Fix the bug');
 });
