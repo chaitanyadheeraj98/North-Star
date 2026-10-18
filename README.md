@@ -403,8 +403,13 @@ re-analyze.
 
 **Size limits.** A task can be up to 200,000 characters. A spec or plan can be
 up to 5,000,000. Anything over 30,000 is **condensed** before Pi sees it: the
-real size, every heading, the file paths it names, and the opening of each
-section. The Router page says when that happened.
+real size; the risk signals found anywhere in it (data migration, security,
+concurrency, destructive or production steps, with exact section counts); its
+outline; the file paths it names; and excerpts from across the whole document.
+Sections with risk signals are kept ahead of everything else, so a migration at
+step 390 of 400 is not lost. The rest of the room goes to the first and last
+sections and an even spread between. The Router page says when a document was
+condensed. (`backend/app/services/input_digest.py`)
 
 ---
 

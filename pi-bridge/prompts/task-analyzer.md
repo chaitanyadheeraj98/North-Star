@@ -58,9 +58,14 @@ describes the work of CARRYING IT OUT, whatever the input type.
   `estimated_files` should follow the files the plan names.
 
 A spec or plan may arrive CONDENSED: a note says how long the original was,
-followed by its outline, the file paths it references, and the opening of each
-section. Treat the note's sizes as real and judge the whole document from the
-outline; do not lower your confidence merely because some text was omitted.
+followed by "Risk signals (whole document)", its outline, the file paths it
+references, and excerpts from sections across the whole document. The risk
+signals come from scanning EVERY section, so they are complete even where the
+outline and excerpts are abridged: a risk category listed there is present in
+the plan, and its section count is exact. Every section carrying a risk signal
+is excerpted first. Treat the sizes and counts as real and judge the whole
+document from them; do not lower your confidence merely because some text was
+omitted.
 
 ## Scoring scale
 

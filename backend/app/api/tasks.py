@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -284,7 +285,9 @@ async def _run_analyzer(
     A long spec or plan is condensed first; the task records that it was.
     """
     input_type = _input_type(task)
-    digest = condense_for_analysis(task.original_task, input_type)
+    # Up to a few seconds for a multi-megabyte plan: off the event loop, so
+    # status polls and Reconnect stay responsive meanwhile.
+    digest = await asyncio.to_thread(condense_for_analysis, task.original_task, input_type)
     task_text = digest.text
     if task.source is not None:
         task.source.condensed = digest.condensed

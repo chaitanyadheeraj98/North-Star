@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
+import hashlib
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -26,6 +27,19 @@ TASK_MAX_CHARS = 200_000
 DOCUMENT_MAX_CHARS = 5_000_000
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+def _content_hashes(text: str) -> set[str]:
+    """Hashes a file with this text can have.
+
+    A browser's TextDecoder drops a leading byte-order mark, so the text that
+    arrives here is the file without it, while the hash is of the bytes on
+    disk. Both forms are therefore legitimate. Line endings are not touched by
+    decoding, so they need no such allowance.
+    """
+    data = text.encode("utf-8")
+    return {hashlib.sha256(data).hexdigest(), hashlib.sha256(_UTF8_BOM + data).hexdigest()}
 
 
 class CreateTaskRequest(BaseModel):
@@ -104,6 +118,19 @@ class CreateTaskRequest(BaseModel):
                 raise ValueError("A file path only applies to a spec or implementation plan.")
         if self.source_sha256 and not self.source_path:
             raise ValueError("source_sha256 needs the source_path it describes.")
+        if self.source_path:
+            # The handoff promises the agent a changed-file check; it cannot
+            # make that promise without the hash, or with a hash of other bytes.
+            if not self.source_sha256:
+                raise ValueError(
+                    "A spec or plan file needs source_sha256, the SHA-256 of its bytes, so "
+                    "the executing model can tell whether the file changed after analysis."
+                )
+            if self.source_sha256 not in _content_hashes(self.task):
+                raise ValueError(
+                    "source_sha256 does not match the text sent. It must be the SHA-256 of "
+                    "the file's UTF-8 bytes, the same file whose text is being analyzed."
+                )
         return self
 
 

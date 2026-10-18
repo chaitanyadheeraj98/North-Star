@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 
 import pytest
 
@@ -59,6 +60,11 @@ def seen(monkeypatch):
     monkeypatch.setattr(HeuristicAnalyzer, "analyze", analyze)
     calls_fingerprint = fingerprint
     return calls, calls_fingerprint
+
+
+def as_file(text: str, path: str = PLAN_PATH) -> dict:
+    """The path and hash the Router page sends for a picked file."""
+    return {"source_path": path, "source_sha256": hashlib.sha256(text.encode()).hexdigest()}
 
 
 def create(client, text, input_type="task", **extra):
@@ -116,8 +122,10 @@ def test_any_shape_stays_within_the_limit(sections):
     digest = condense_for_analysis(plan, InputType.SPEC)
     assert digest.condensed and len(digest.text) <= ANALYSIS_LIMIT
     if sections == 2_000:
-        assert "more" in digest.text  # outline truncated with a count
-        assert "later sections omitted" in digest.text
+        assert "headings ..." in digest.text  # outline abridged, with counts
+        assert "sections omitted; see the outline" in digest.text
+        # The end of the plan is kept, not cut off.
+        assert "## Step 2000:" in digest.text.split("## Section excerpts")[1]
 
 
 # --- Limits and validation ----------------------------------------------------
@@ -214,7 +222,7 @@ def test_a_complex_spec_file_gets_a_plan_written_from_it(client, seen):
     fingerprint["value"] = fp(
         complexity=0.9, scope="multi_service", requirements_clarity=0.3, ambiguity=0.7
     )
-    created = create(client, "Goal: everything", "spec", source_path="docs/specs/s.md").json()
+    created = create(client, "Goal: everything", "spec", **as_file("Goal: everything", "docs/specs/s.md")).json()
     prep = created["preparation"]
     # Vague as well, but a spec is never told to write a spec.
     assert prep["mode"] == "plan" and prep["spec_path"] is None
@@ -243,7 +251,8 @@ def test_a_plain_task_is_unchanged(client, seen, session):
 
 def test_reanalysis_keeps_the_input_type(client, seen):
     calls, _ = seen
-    task_id = create(client, long_plan(), "plan", source_path=PLAN_PATH).json()["public_task_id"]
+    plan = long_plan()
+    task_id = create(client, plan, "plan", **as_file(plan)).json()["public_task_id"]
     again = client.post(f"/api/tasks/{task_id}/analyze", json={"analyzer": "heuristic"}).json()
     assert calls[-1]["input_type"] == InputType.PLAN and len(calls[-1]["text"]) <= ANALYSIS_LIMIT
     assert again["input"]["condensed"] is True
@@ -251,7 +260,7 @@ def test_reanalysis_keeps_the_input_type(client, seen):
 
 
 def test_deleting_a_task_removes_its_source(client, seen, session):
-    task_id = create(client, "1. x", "plan", source_path=PLAN_PATH).json()["public_task_id"]
+    task_id = create(client, "1. x", "plan", **as_file("1. x")).json()["public_task_id"]
     assert client.delete(f"/api/tasks/{task_id}").status_code == 204
     assert session.query(TaskSource).count() == 0
 
@@ -279,3 +288,103 @@ def test_the_pi_client_sends_the_input_type(app_env, monkeypatch):
         with pytest.raises(Exception):
             asyncio.run(analyzer.analyze("text", None, input_type))
     assert [p["input_type"] for p in sent] == ["task", "spec", "plan"]
+
+
+# --- Review round 1: late risks survive condensing ---------------------------
+
+
+def cosmetic_plan_with(risky: dict[int, str], sections: int = 400) -> str:
+    """Many cosmetic steps; the given step numbers carry real risk."""
+    parts = ["# Plan"]
+    for i in range(1, sections + 1):
+        title = "Risky step" if i in risky else "Tweak UI copy"
+        body = risky.get(i, "Rename a label and adjust spacing. " * 8)
+        parts += [f"## Step {i}: {title}", body, ""]
+    return "\n".join(parts)
+
+
+def test_a_late_risky_step_is_never_dropped():
+    """Regression: only early sections used to survive, so step 390 vanished."""
+    plan = cosmetic_plan_with({390: "LATE-MIGRATION: write a data migration that rebuilds the payments table."})
+    text = condense_for_analysis(plan, InputType.PLAN).text
+    assert len(text) <= ANALYSIS_LIMIT
+    excerpts = text[text.index("## Section excerpts"):]
+    assert "LATE-MIGRATION" in excerpts, "the risky step's own text must be excerpted"
+    outline = text[text.index("## Outline"):text.index("## Section excerpts")]
+    assert "## Step 390: Risky step" in outline
+    assert "data migration / schema: 1 sections, e.g. ## Step 390" in text
+
+
+@pytest.mark.parametrize(
+    ("phrase", "category"),
+    [
+        ("rotate the encryption keys for stored card tokens", "security"),
+        ("make the retry path idempotent so a race condition cannot double-charge", "concurrency"),
+        ("cut over production with zero downtime", "destructive / production"),
+        ("ALTER TABLE invoices DROP COLUMN legacy_total", "data migration / schema"),
+    ],
+)
+def test_every_risk_category_is_detected_anywhere(phrase, category):
+    text = condense_for_analysis(cosmetic_plan_with({397: phrase}), InputType.PLAN).text
+    assert f"{category}: 1 sections, e.g. ## Step 397" in text
+    assert phrase in text
+
+
+def test_risk_signals_report_none_when_there_are_none():
+    text = condense_for_analysis(cosmetic_plan_with({}), InputType.PLAN).text
+    assert "## Risk signals (whole document)\n- none found" in text
+
+
+def test_more_risky_sections_than_room_are_sampled_across_the_whole_plan():
+    """When risk is everywhere, the kept excerpts must not all come from the start."""
+    risky = {i: f"RISK-{i}: data migration for table t{i}." for i in range(1, 1201)}
+    text = condense_for_analysis(cosmetic_plan_with(risky, sections=1200), InputType.PLAN).text
+    kept = [int(n) for n in re.findall(r"RISK-(\d+):", text[text.index("## Section excerpts"):])]
+    assert 20 < len(kept) < 1200
+    assert min(kept) <= 10 and max(kept) >= 1190, "both ends of the plan are represented"
+    assert max(b - a for a, b in zip(kept, kept[1:])) <= 3 * 1200 // len(kept)
+
+
+def test_kept_sections_are_spread_evenly_not_bunched_at_the_start():
+    text = condense_for_analysis(cosmetic_plan_with({}), InputType.PLAN).text
+    for block, start, end in [("excerpts", "## Section excerpts", None), ("outline", "## Outline", "## Section excerpts")]:
+        part = text[text.index(start): text.index(end) if end else None]
+        kept = [int(n) for n in re.findall(r"## Step (\d+):", part)]
+        gaps = [b - a for a, b in zip(kept, kept[1:])]
+        assert max(gaps) - min(gaps) <= 2, f"{block} spacing is uneven: {gaps[:12]}"
+        assert kept[-1] == 400, f"{block} must reach the last step"
+
+
+# --- Review round 1: a file always carries a verified hash -------------------
+
+
+def test_a_file_path_without_its_hash_is_rejected(client, session):
+    response = create(client, "1. x", "plan", source_path=PLAN_PATH)
+    assert response.status_code == 422 and "needs source_sha256" in response.text
+    assert session.query(TaskSource).count() == 0
+
+
+def test_a_hash_of_other_bytes_is_rejected(client, session):
+    response = create(client, "1. x", "plan", **as_file("1. something else"))
+    assert response.status_code == 422 and "does not match" in response.text
+    assert session.query(TaskSource).count() == 0
+
+
+def test_a_hash_of_the_file_with_its_byte_order_mark_is_accepted(client, seen):
+    """The browser strips a BOM when decoding; the hash is of the bytes on disk."""
+    text = "# Plan\r\n1. x\r\n"
+    sha = hashlib.sha256(b"\xef\xbb\xbf" + text.encode()).hexdigest()
+    response = create(client, text, "plan", source_path=PLAN_PATH, source_sha256=sha)
+    assert response.status_code == 201, response.text
+    assert f"source_sha256={sha}" in response.json()["handoffs"]["codex"]
+
+
+def test_a_risk_deep_inside_a_long_section_is_what_gets_excerpted():
+    """Regression: an excerpt was always a section's opening, so a migration
+    mentioned 6,000 characters into a step was counted but never shown."""
+    deep = ("Polish the settings page copy. " * 200) + "DEEP-RISK: then backfill the ledger with a data migration."
+    text = condense_for_analysis(cosmetic_plan_with({200: deep}), InputType.PLAN).text
+    assert len(text) <= ANALYSIS_LIMIT
+    excerpts = text[text.index("## Section excerpts"):]
+    assert "## Step 200: Risky step\n[...]\n" in excerpts
+    assert "DEEP-RISK: then backfill the ledger with a data migration." in excerpts

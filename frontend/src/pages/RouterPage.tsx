@@ -65,7 +65,10 @@ export function RouterPage({
     setFileError(null);
     // A task is always typed or pasted; a file only makes sense for a spec or plan.
     if (next === 'task') setPicked(null);
-    else if (picked) setSourcePath(suggestedPath(next, picked.name));
+    // Re-guess only our own guess; a path the user typed is theirs to keep.
+    else if (picked && sourcePath === suggestedPath(inputType, picked.name)) {
+      setSourcePath(suggestedPath(next, picked.name));
+    }
   }
 
   async function pickFile(file: File | undefined) {
@@ -275,8 +278,9 @@ export function RouterPage({
       {result?.input?.condensed && (
         <p className="text-sm text-slate-400">
           Pi classified a condensed version of this {result.input.content_chars.toLocaleString()}
-          -character {result.input.input_type === 'spec' ? 'spec' : 'plan'}: its outline, the files
-          it names, and the opening of each section.
+          -character {result.input.input_type === 'spec' ? 'spec' : 'plan'}: the risk signals
+          found anywhere in it, its outline, the files it names, and excerpts from across the
+          whole document, risky sections first.
           {result.input.source_path
             ? ` The handoff points the model at ${result.input.source_path}, so it reads the whole file.`
             : ' The handoff carries the full text.'}

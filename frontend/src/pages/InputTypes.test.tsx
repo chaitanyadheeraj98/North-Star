@@ -145,3 +145,24 @@ describe('Router page input types', () => {
     expect(screen.getByLabelText(/what do you want/i)).toBeInTheDocument();
   });
 });
+
+describe('Router page path box', () => {
+  it('switching spec and plan re-guesses its own guess but keeps a typed path', async () => {
+    const user = userEvent.setup();
+    render(<RouterPage pi={null} preferences={PREFS} />);
+    await user.click(screen.getByRole('radio', { name: 'Implementation plan' }));
+    fireEvent.change(screen.getByLabelText(/choose a plan file/i), {
+      target: { files: [planFile('# P', 'doc.md')] },
+    });
+    const path = await screen.findByLabelText('Path in your repository');
+    expect(path).toHaveValue('docs/plans/doc.md');
+
+    await user.click(screen.getByRole('radio', { name: 'Spec' }));
+    expect(screen.getByLabelText('Path in your repository')).toHaveValue('docs/specs/doc.md');
+
+    await user.clear(screen.getByLabelText('Path in your repository'));
+    await user.type(screen.getByLabelText('Path in your repository'), 'design/doc.md');
+    await user.click(screen.getByRole('radio', { name: 'Implementation plan' }));
+    expect(screen.getByLabelText('Path in your repository')).toHaveValue('design/doc.md');
+  });
+});

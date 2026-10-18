@@ -6,6 +6,13 @@ depends on the plan's size, shape and riskiest steps, not on every word. The
 executing model reads the full file from the repository instead (see the
 handoff), so nothing is lost by condensing here.
 
+What must never be lost is the hard part. A plan of 400 cosmetic steps with
+one data migration at step 390 is a migration plan, and a digest that kept only
+the first sections would route it as cosmetic. So the WHOLE document is scanned
+for risk signals, and the sections that carry them are kept ahead of everything
+else, wherever they are. The remaining room goes to the first and last
+sections and an even spread across the middle.
+
 Deterministic on purpose: the same document always condenses to the same text,
 so re-analysing it is comparable, and the condensed text is plain enough for the
 offline analyzer too. Tasks are never condensed; they keep their own limit.
@@ -30,6 +37,36 @@ _PATH = re.compile(
 )
 _KIND = {InputType.SPEC: "spec", InputType.PLAN: "implementation plan"}
 
+#: What makes a step expensive to get wrong. These mirror the fingerprint's own
+#: risk dimensions (database, security, concurrency) plus destructive and
+#: production-facing operations. Matching is a cheap, broad net: a false
+#: positive costs one kept excerpt; a miss can under-route the whole plan.
+RISK_SIGNALS: dict[str, re.Pattern[str]] = {
+    "data migration / schema": re.compile(
+        r"\b(migrat\w*|schema|alter\s+table|drop\s+(?:table|column)|backfill\w*|"
+        r"foreign\s+key|data\s+loss|re-?key\w*)\b",
+        re.IGNORECASE,
+    ),
+    "security": re.compile(
+        r"\b(auth\w*|password\w*|secret\w*|credential\w*|encrypt\w*|decrypt\w*|"
+        r"permission\w*|csrf|xss|injection|token\w*|oauth|rbac|pii)\b",
+        re.IGNORECASE,
+    ),
+    "concurrency": re.compile(
+        r"\b(race\s+condition\w*|concurren\w*|deadlock\w*|idempoten\w*|"
+        r"mutex\w*|locking|distributed\s+lock\w*|transaction\w*)\b",
+        re.IGNORECASE,
+    ),
+    "destructive / production": re.compile(
+        r"\b(delete\s+(?:all|existing|old)|truncate|irreversibl\w*|rollback|"
+        r"production|downtime|zero[- ]downtime|cut\s*over)\b",
+        re.IGNORECASE,
+    ),
+}
+
+#: Smallest excerpt worth sending; below this a section says nothing useful.
+_MIN_EXCERPT = 300
+
 
 @dataclass(frozen=True)
 class Digest:
@@ -38,34 +75,65 @@ class Digest:
     original_chars: int
 
 
+@dataclass(frozen=True)
+class _Section:
+    index: int
+    heading: str
+    body: str
+    risks: tuple[str, ...]
+
+
 def condense_for_analysis(text: str, input_type: InputType) -> Digest:
     """The text to analyze. Unchanged unless it is a spec or plan over the limit."""
     if input_type == InputType.TASK or len(text) <= ANALYSIS_LIMIT:
         return Digest(text=text, condensed=False, original_chars=len(text))
 
     lines = text.splitlines()
-    headings = [line.strip() for line in lines if _HEADING.match(line)]
+    sections = _sections(lines)
+    headings = [s.heading for s in sections if s.heading]
     steps = sum(1 for line in lines if _NUMBERED_STEP.match(line))
     checkboxes = sum(1 for line in lines if _CHECKBOX.match(line))
     paths = _paths(text)
+    risky = [s for s in sections if s.risks]
 
     note = (
         f"[CONDENSED FOR CLASSIFICATION] The original {_KIND[input_type]} is "
         f"{len(text):,} characters and {len(lines):,} lines, with {len(headings):,} "
         f"headings, {steps:,} numbered steps, {checkboxes:,} checklist items and "
-        f"{len(paths):,} distinct file paths. Below are its outline, the file paths "
-        "it references, and the opening of each section. The executing model reads "
-        "the full document."
+        f"{len(paths):,} distinct file paths. {len(risky):,} of its {len(sections):,} "
+        "sections carry risk signals; all of them are listed below and excerpted "
+        "first. Below are those signals, its outline, the file paths it references, "
+        "and excerpts from sections across the whole document. The executing model "
+        "reads the full document."
     )
     budget = ANALYSIS_LIMIT - len(note) - 200  # room for the section separators
-    outline = _bounded_list("Outline", headings, budget * 30 // 100)
-    files = _bounded_list("Referenced files", paths, budget * 15 // 100)
-    excerpts = _excerpts(lines, budget - len(outline) - len(files))
+    risk_block = _risk_summary(sections, budget * 15 // 100)
+    outline = _outline(sections, budget * 22 // 100)
+    files = _bounded_list("Referenced files", paths, budget * 10 // 100)
+    excerpts = _excerpts(sections, budget - len(risk_block) - len(outline) - len(files))
 
-    parts = [note, outline, files, "## Section openings", excerpts]
+    parts = [note, risk_block, outline, files, "## Section excerpts", excerpts]
     condensed = "\n\n".join(part for part in parts if part)
     # The pieces are each bounded; this only guards against rounding.
     return Digest(text=condensed[:ANALYSIS_LIMIT], condensed=True, original_chars=len(text))
+
+
+def _sections(lines: list[str]) -> list[_Section]:
+    """Split at headings. Text before the first heading is its own section."""
+    groups: list[list[str]] = [[]]
+    for line in lines:
+        if _HEADING.match(line) and groups[-1]:
+            groups.append([])
+        groups[-1].append(line)
+    out = []
+    for group in groups:
+        body = "\n".join(group)
+        if not body.strip():
+            continue
+        heading = group[0].strip() if _HEADING.match(group[0]) else ""
+        risks = tuple(name for name, pattern in RISK_SIGNALS.items() if pattern.search(body))
+        out.append(_Section(index=len(out), heading=heading, body=body, risks=risks))
+    return out
 
 
 def _paths(text: str) -> list[str]:
@@ -92,44 +160,160 @@ def _bounded_list(title: str, items: list[str], limit: int) -> str:
     return "\n".join(out)
 
 
-def _excerpts(lines: list[str], budget: int) -> str:
-    """The opening of every section, an equal share each.
+def _label(section: _Section) -> str:
+    return section.heading[:160] if section.heading else f"(section {section.index + 1}, untitled)"
 
-    Without headings the document is one section, and its start and end are
-    kept: plans tend to put the overview first and verification last.
-    """
-    sections: list[list[str]] = [[]]
-    for line in lines:
-        if _HEADING.match(line) and sections[-1]:
-            sections.append([])
-        sections[-1].append(line)
-    sections = [s for s in sections if any(line.strip() for line in s)]
+
+def _risk_summary(sections: list[_Section], limit: int) -> str:
+    """Every risk category found anywhere, with how many sections and where."""
+    if limit <= 0:
+        return ""
+    # Fewer examples per category until it fits; never cut a category off.
+    for examples_per_category in (4, 3, 2, 1, 0):
+        lines = ["## Risk signals (whole document)"]
+        for name in RISK_SIGNALS:
+            hits = [s for s in sections if name in s.risks]
+            if not hits:
+                continue
+            # Spread the examples across the document, not just its start.
+            shown = [hits[i] for i in _spread(len(hits), examples_per_category)]
+            examples = f", e.g. {'; '.join(_label(s) for s in shown)}" if shown else ""
+            more = f" and {len(hits) - len(shown):,} more" if shown and len(hits) > len(shown) else ""
+            lines.append(f"- {name}: {len(hits):,} sections{examples}{more}")
+        if len(lines) == 1:
+            lines.append("- none found")
+        summary = "\n".join(lines)
+        if len(summary) <= limit:
+            return summary
+    return ""
+
+
+def _outline(sections: list[_Section], limit: int) -> str:
+    """All headings if they fit; otherwise risky first and last, spread between."""
+    titled = [s for s in sections if s.heading]
+    if not titled or limit <= 0:
+        return ""
+    lines = [f"- {s.heading[:200]}" for s in titled]
+    if sum(len(line) + 1 for line in lines) + 20 <= limit:
+        return "## Outline\n" + "\n".join(lines)
+
+    # Start from an estimate of how many lines fit, and shrink until it does.
+    # Never truncate the text: cutting the end is exactly how late (risky)
+    # headings used to disappear.
+    average = max(1, sum(len(line) + 1 for line in lines) // len(lines))
+    room = max(2, (limit - 60) // (average + 22))
+    while True:
+        outline = _abridged_outline(titled, _choose(titled, room))
+        if len(outline) <= limit or room <= 2:
+            return outline if len(outline) <= limit else ""
+        room = max(2, room * limit // len(outline) - 1)
+
+
+def _abridged_outline(titled: list[_Section], keep: set[int]) -> str:
+    out = ["## Outline (abridged; risky headings are always kept)"]
+    previous = -1
+    for position, section in enumerate(titled):
+        if section.index not in keep:
+            continue
+        if position - previous > 1:
+            out.append(f"- ... {position - previous - 1:,} headings ...")
+        out.append(f"- {section.heading[:200]}")
+        previous = position
+    if previous < len(titled) - 1:
+        out.append(f"- ... {len(titled) - previous - 1:,} headings ...")
+    return "\n".join(out)
+
+
+def _excerpts(sections: list[_Section], budget: int) -> str:
+    """Excerpts from risky sections first, then first/last and an even spread."""
     if not sections or budget <= 0:
         return ""
-
     if len(sections) == 1:
-        body = "\n".join(sections[0])
+        body = sections[0].body
+        if len(body) <= budget:
+            return body
         head, tail = budget * 70 // 100, budget * 25 // 100
         return f"{body[:head]}\n[... {len(body) - head - tail:,} characters omitted ...]\n{body[-tail:]}"
 
-    # Each excerpt also costs a "[...]" marker and a blank line.
-    share = budget // len(sections) - 10
-    if share < 300:
-        # Too many sections for a useful share each: fewer, longer excerpts.
-        keep = max(1, (budget - 80) // 310)
-        share = (budget - 80) // keep - 10
-        omitted = len(sections) - keep
-        sections = sections[:keep]
-    else:
-        omitted = 0
+    # Each excerpt also costs a "[...]" marker, a gap marker and blank lines.
+    overhead = 60
+    count = min(len(sections), max(1, budget // (_MIN_EXCERPT + overhead)))
+    keep = _choose(sections, count)
+    share = budget // len(keep) - overhead
 
     out = []
+    previous = -1
     for section in sections:
-        body = "\n".join(section)
-        if len(body) > share:
-            cut = body.rfind("\n", 0, share)
-            body = body[: cut if cut > share // 2 else share] + "\n[...]"
-        out.append(body)
-    if omitted:
-        out.append(f"[... {omitted:,} later sections omitted; see the outline ...]")
+        if section.index not in keep:
+            continue
+        if section.index - previous > 1:
+            out.append(f"[... {section.index - previous - 1:,} sections omitted; see the outline ...]")
+        out.append(_excerpt(section, share))
+        previous = section.index
+    if previous < len(sections) - 1:
+        out.append(f"[... {len(sections) - previous - 1:,} later sections omitted; see the outline ...]")
     return "\n\n".join(out)
+
+
+def _excerpt(section: _Section, share: int) -> str:
+    """The section if it fits; otherwise its opening, or for a risky section the
+    text around its first risk signal, which may be far past the opening."""
+    body = section.body
+    if len(body) <= share:
+        return body
+    first = min(
+        (m.start() for p in RISK_SIGNALS.values() if (m := p.search(body))), default=None
+    )
+    if first is None or first < share * 2 // 3:
+        cut = body.rfind("\n", 0, share)
+        return body[: cut if cut > share // 2 else share] + "\n[...]"
+    # Heading for context, then a window that starts a little before the signal.
+    head = (section.heading or body[:80])[:120]
+    room = max(80, share - len(head) - 20)
+    start = max(0, first - room // 4)
+    return f"{head}\n[...]\n{body[start:start + room]}\n[...]"
+
+
+def _choose(sections: list[_Section], count: int) -> set[int]:
+    """Which sections to keep, by `index`, when not all of them fit.
+
+    Order of priority: sections with the most kinds of risk, then the first and
+    last (overview and verification), then an even spread across the rest.
+    """
+    if count >= len(sections):
+        return {s.index for s in sections}
+    chosen: set[int] = set()
+
+    def take_spread(group: list[_Section], room: int) -> None:
+        candidates = [s for s in group if s.index not in chosen]
+        for i in _spread(len(candidates), room):
+            chosen.add(candidates[i].index)
+
+    # Most kinds of risk first. A group larger than the room left is itself
+    # sampled evenly, so late risky sections are as likely to stay as early ones.
+    by_risk: dict[int, list[_Section]] = {}
+    for s in sections:
+        if s.risks:
+            by_risk.setdefault(len(s.risks), []).append(s)
+    for kinds in sorted(by_risk, reverse=True):
+        take_spread(by_risk[kinds], count - len(chosen))
+    take_spread([sections[0], sections[-1]], count - len(chosen))
+    # The rest: an even grid over the WHOLE document (ends included, so already
+    # taken), then whatever room the grid's overlap with risky sections left.
+    for i in _spread(len(sections), count):
+        if len(chosen) >= count:
+            break
+        chosen.add(sections[i].index)
+    take_spread(sections, count - len(chosen))
+    return chosen
+
+
+def _spread(n: int, k: int) -> list[int]:
+    """min(n, k) distinct indexes into range(n), evenly spaced, ends included."""
+    if n <= 0 or k <= 0:
+        return []
+    if k >= n:
+        return list(range(n))
+    if k == 1:
+        return [0]
+    return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
