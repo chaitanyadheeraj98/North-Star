@@ -1,6 +1,6 @@
 ---
 name: router-outcome
-description: Generate an execution receipt for Adaptive LLM Router after finishing a task that carried an [LLM-ROUTER] metadata block. Use when the user says "generate the router result receipt", "router result", "/router-result", "router-outcome", or asks for the receipt to paste back into the router. Produces a validated [LLM-ROUTER-RESULT] JSON block from observed facts about the session.
+description: Generate and automatically submit an execution receipt to Adaptive LLM Router after finishing a task that carried an [LLM-ROUTER] metadata block. Use on your own as soon as such a task is finished, or when the user says "generate the router result receipt", "router result", "/router-result", "router-outcome". Produces a validated [LLM-ROUTER-RESULT] JSON block from observed facts about the session and POSTs it to the local router.
 ---
 
 # Router Outcome Receipt
@@ -182,9 +182,25 @@ JSON object. No commentary inside the markers, no code fence inside them.
 [/LLM-ROUTER-RESULT]
 ```
 
-Then add one short line outside the markers:
+## 6. Submit it to the router yourself
 
-> Paste this into the Result page at http://localhost:3000.
+Do not ask the user to copy or paste anything. Write the whole block, markers
+included, to a temporary file and POST it as plain text:
+
+```
+curl -sS -X POST http://localhost:3000/api/results/import-text -H "Content-Type: text/plain; charset=utf-8" --data-binary @<path-to-receipt-file>
+```
+
+Write the file with your file-writing tool, not `echo`, so quotes and newlines
+survive. Delete the file afterwards. On Windows without `curl`, use
+`Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/results/import-text -ContentType 'text/plain; charset=utf-8' -InFile <path>`.
+
+- **HTTP 200**: tell the user in one line that the receipt was recorded, and
+  repeat the `learning_summary` from the response.
+- **HTTP 422**: the router rejected the receipt and says why. Fix exactly that
+  inconsistency and submit again, once. Do not change facts to make it pass.
+- **Router unreachable**: tell the user it could not be submitted, and that
+  the block above can be pasted into the Result page at http://localhost:3000.
 
 ## Consistency rules the router enforces
 

@@ -194,7 +194,7 @@ application rewrites its own config files.
 | --- | --- | --- |
 | Docker Desktop | frontend + backend | any current version |
 | Node.js | Pi bridge | **22.6+** (it runs TypeScript directly) |
-| Pi | task classification | `npm install -g @mariozechner/pi-coding-agent` |
+| Pi | task classification | `npm install -g @earendil-works/pi-coding-agent` |
 | A subscription | Pi's model calls | Claude Pro/Max or ChatGPT Plus/Pro |
 
 You do **not** need an Anthropic or OpenAI API key. Pi uses the subscription you
@@ -570,7 +570,7 @@ Two places set it, and the second wins:
 
 ```
 PI_PROVIDER=openai-codex
-PI_MODEL=gpt-5.5
+PI_MODEL=gpt-6-astra
 PI_THINKING_LEVEL=low
 ```
 
@@ -609,7 +609,7 @@ So a failure now looks like this, and lists what else is available without
 taking any of it:
 
 ```
-  analyzer : openai-codex / gpt-5.5 / low
+  analyzer : openai-codex / gpt-6-astra / low
   auth     : NOT READY (not_authenticated)
 
   Pi is not authenticated with "openai-codex".
@@ -835,9 +835,10 @@ Deliberately not built in V1:
 - **Single user, no auth.** Everything is bound to loopback.
 - **The offline analyzer is keyword-based.** It exists so the app still works
   when Pi is down, not as a replacement for semantic understanding.
-- **`@mariozechner/pi-coding-agent` is being renamed** to
-  `@earendil-works/pi-coding-agent`. The bridge pins the current package; the Pi
-  adapter is one file (`pi-bridge/src/pi.ts`) when that move needs making.
+- **The bridge pins `@earendil-works/pi-coding-agent`** (formerly
+  `@mariozechner/pi-coding-agent`). Keep it on the same version as the global
+  `pi` CLI, or the bridge will not know models the CLI lists. All SDK calls live
+  in `pi-bridge/src/pi.ts`.
 
 ---
 

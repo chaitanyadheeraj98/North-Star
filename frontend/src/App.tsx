@@ -44,6 +44,33 @@ export function App() {
 
   useEffect(refreshStatus, [refreshStatus]);
 
+  // Background reconnect: poll every 30s and, when Pi drops, restart the bridge
+  // without being asked. At most one attempt every two minutes, so a problem a
+  // restart cannot fix (for example an expired login) does not loop.
+  useEffect(() => {
+    let lastAttempt = 0;
+    let busy = false;
+    const timer = window.setInterval(() => {
+      if (busy) return;
+      api
+        .settings()
+        .then(async (settings) => {
+          setPi(settings.pi);
+          setPreferences(settings.preferences);
+          if (settings.pi.available || Date.now() - lastAttempt < 120_000) return;
+          lastAttempt = Date.now();
+          busy = true;
+          try {
+            setPi(await api.piReconnect());
+          } finally {
+            busy = false;
+          }
+        })
+        .catch(() => setPi(null));
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   function go(next: Tab) {
     window.location.hash = `/${next}`;
     setTab(next);

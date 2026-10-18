@@ -127,6 +127,4 @@ if ($WhatIfOnly) {
 
 Write-Host "Installed into: $($installed -join ', ')" -ForegroundColor Green
 Write-Host ""
-Write-Host "After finishing a routed task, ask the agent:" -ForegroundColor White
-Write-Host '  "generate the router result receipt"'
-Write-Host "then paste the [LLM-ROUTER-RESULT] block into the Result page."
+Write-Host "The agent runs it on its own after a routed task and submits the receipt to the router."

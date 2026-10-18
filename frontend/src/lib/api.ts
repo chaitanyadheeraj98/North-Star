@@ -13,6 +13,7 @@ import type {
   HandoffResponse,
   HistoryResponse,
   ImportResultResponse,
+  PiStatus,
   SettingsResponse,
   TaskResponse,
 } from './types.ts';
@@ -135,6 +136,10 @@ export const api = {
     }),
 
   piStatus: () => request<Record<string, unknown>>('/api/pi/status'),
+
+  /** Restarts the bridge on the host and waits (up to a minute) for it. */
+  piReconnect: () =>
+    request<PiStatus & { reconnect: string }>('/api/pi/reconnect', { method: 'POST' }),
 
   piModels: () => request<{ models: PiModelOption[] }>('/api/pi/models'),
 

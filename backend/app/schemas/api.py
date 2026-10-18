@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .routing_decision import RoutingRecommendations
+from ..services.preparation import Preparation
 from .task_fingerprint import TaskFingerprint
 
 
@@ -79,6 +80,8 @@ class TaskResponse(BaseModel):
     fingerprint: TaskFingerprint | None = None
     analyzer: AnalyzerInfo | None = None
     recommendation: RoutingRecommendations | None = None
+    #: Execute directly, plan first, or spec and plan first. See services/preparation.py.
+    preparation: Preparation | None = None
     handoffs: dict[str, str] = Field(default_factory=dict)
     execution: dict[str, Any] | None = None
 

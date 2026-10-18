@@ -31,7 +31,7 @@ if command -v node >/dev/null 2>&1; then
 fi
 
 if ! command -v pi >/dev/null 2>&1; then
-  echo "   WARN  the 'pi' CLI is not on PATH: npm install -g @mariozechner/pi-coding-agent"
+  echo "   WARN  the 'pi' CLI is not on PATH: npm install -g @earendil-works/pi-coding-agent"
 fi
 
 echo

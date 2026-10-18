@@ -26,6 +26,7 @@ from ..schemas.task_fingerprint import (
 )
 from ..services import routing_service, task_service
 from ..services.analyzer import AnalyzerError, AnalyzerOverrides, HeuristicAnalyzer
+from ..services.preparation import Preparation, recommend_preparation
 from .deps import ConfigDep, SessionDep, analyzer_for
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -74,6 +75,7 @@ async def create_task(
         fingerprint=fingerprint,
         analyzer=analyzer_info,
         recommendation=decision,
+        preparation=_preparation(task, fingerprint),
         handoffs=handoffs,
     )
 
@@ -110,6 +112,7 @@ async def analyze_task(
         fingerprint=envelope.fingerprint,
         analyzer=analyzer_info,
         recommendation=decision,
+        preparation=_preparation(task, envelope.fingerprint),
         handoffs=handoffs,
     )
 
@@ -205,7 +208,10 @@ def get_handoff(
     model_id = entry.model_id if entry else decision.model
     return HandoffResponse(
         public_task_id=task.public_task_id,
-        handoff=task_service.build_handoff(task, decision, decision.router_version, model_id),
+        handoff=task_service.build_handoff(
+            task, decision, decision.router_version, model_id,
+            _preparation(task, _stored_fingerprint(session, task)),
+        ),
         task_only=task.original_task,
         provider=decision.provider,
         model=decision.model,
@@ -322,10 +328,25 @@ def _route_and_store(
     )
     decision = routing_service.route_fingerprint(session, config, envelope.fingerprint)
     routing_service.store_decision(session, config, task, decision)
-    return decision, _handoffs(config, task, decision)
+    return decision, _handoffs(config, task, decision, envelope.fingerprint)
 
 
-def _handoffs(config: ConfigBundle, task: Task, recommendations: RoutingRecommendations) -> dict[str, str]:
+def _preparation(task: Task, fingerprint: TaskFingerprint | None) -> Preparation | None:
+    return recommend_preparation(fingerprint, task.public_task_id) if fingerprint else None
+
+
+def _stored_fingerprint(session: Session, task: Task) -> TaskFingerprint | None:
+    row = task_service.fingerprint_row(session, task)
+    return TaskFingerprint.model_validate(row.fingerprint_json) if row else None
+
+
+def _handoffs(
+    config: ConfigBundle,
+    task: Task,
+    recommendations: RoutingRecommendations,
+    fingerprint: TaskFingerprint | None,
+) -> dict[str, str]:
+    preparation = _preparation(task, fingerprint)
     handoffs = {}
     for provider in ("codex", "claude"):
         decision = recommendations.for_provider(provider)
@@ -334,6 +355,7 @@ def _handoffs(config: ConfigBundle, task: Task, recommendations: RoutingRecommen
             handoffs[provider] = task_service.build_handoff(
                 task, decision, decision.router_version,
                 entry.model_id if entry else decision.model,
+                preparation,
             )
     return handoffs
 
@@ -361,7 +383,7 @@ def _task_response(
     decision_row = task_service.latest_decision(session, task)
     if decision_row is not None:
         decision = routing_service.load_decision(decision_row)
-        handoffs = _handoffs(config, task, decision)
+        handoffs = _handoffs(config, task, decision, fingerprint)
 
     execution_summary: dict[str, Any] | None = None
     execution = session.execute(
@@ -394,6 +416,7 @@ def _task_response(
         fingerprint=fingerprint,
         analyzer=analyzer,
         recommendation=decision,
+        preparation=_preparation(task, fingerprint),
         handoffs=handoffs,
         execution=execution_summary,
     )

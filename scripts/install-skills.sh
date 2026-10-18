@@ -36,4 +36,4 @@ MSG
 fi
 
 echo
-echo "After a routed task, ask the agent: \"generate the router result receipt\""
+echo "The agent runs it on its own after a routed task and submits the receipt to the router."

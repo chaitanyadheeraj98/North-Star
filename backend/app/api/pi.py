@@ -1,6 +1,6 @@
-"""Pi bridge status passthrough.
+"""Pi bridge status passthrough, plus reconnect.
 
-Read-only. The backend never proxies credentials, never asks the bridge for
+Reconnect only restarts the bridge process; it touches no credentials. The backend never proxies credentials, never asks the bridge for
 secrets, and never exposes anything beyond which provider and model the
 analyzer is currently using.
 """
@@ -20,6 +20,11 @@ router = APIRouter(prefix="/api/pi", tags=["pi"])
 @router.get("/status")
 async def pi_status(pi: PiBridgeAnalyzer = PiDep) -> dict[str, Any]:
     return await pi.status()
+
+
+@router.post("/reconnect")
+async def pi_reconnect(pi: PiBridgeAnalyzer = PiDep) -> dict[str, Any]:
+    return await pi.reconnect()
 
 
 @router.get("/providers")

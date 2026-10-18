@@ -32,7 +32,7 @@ const REPO_ROOT = join(HERE, '..', '..');
 /**
  * Thinking levels the installed Pi SDK accepts.
  *
- * Verified against @mariozechner/pi-ai 0.73.x:
+ * Verified against @earendil-works/pi-ai 0.85.x:
  *   export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh"
  *
  * Note this is Pi's vocabulary for the ANALYZER, and is deliberately separate
@@ -61,7 +61,9 @@ export type AnalyzerConfig = {
  */
 const BUILT_IN = {
   provider: 'openai-codex',
-  model: 'gpt-5.5',
+  // gpt-5.5 was withdrawn from ChatGPT-account Codex ("not supported when using
+  // Codex with a ChatGPT account"); GPT-6 Astra is the current subscription model.
+  model: 'gpt-6-astra',
   thinkingLevel: 'low' as ThinkingLevel,
 };
 

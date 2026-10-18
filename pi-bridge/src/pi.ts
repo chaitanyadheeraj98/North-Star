@@ -5,32 +5,31 @@
  * bridge exposes a fixed HTTP contract, so swapping the Pi SDK for Pi RPC or a
  * subprocess touches these files and nothing on the Python side.
  *
- * Verified against @mariozechner/pi-coding-agent 0.73.1:
- *   AuthStorage.create()                      credential store (~/.pi/agent/auth.json)
- *   ModelRegistry.create(authStorage)         built-in + custom models
+ * Verified against @earendil-works/pi-coding-agent 0.85.1 (the renamed
+ * @mariozechner package; 0.73 predates the GPT-5.6/6 models):
+ *   await ModelRuntime.create()               credentials (~/.pi/agent/auth.json) + models
+ *   new ModelRegistry(modelRuntime)           synchronous facade over that runtime
  *   registry.find(provider, id)               resolve one model explicitly
  *   registry.getAvailable()                   models that have SOME credential
- *   authStorage.getApiKey(provider)           refreshes OAuth; undefined if it cannot
- *   createAgentSession({ model, thinkingLevel, ... })
+ *   registry.getApiKeyForProvider(provider)   refreshes OAuth; undefined if it cannot
+ *   registry.getProviderAuthStatus(provider)  whether a credential is configured at all
+ *   createAgentSession({ modelRuntime, model, thinkingLevel, ... })
  *
- * There is no `ModelRuntime` export in this version of the SDK. The surface
- * that resolves a model is `ModelRegistry`, and `AgentSessionRuntime` is a
- * different thing (session replacement, not model lookup). `ModelRegistry.find`
- * is used below and the resolved `Model` object is passed explicitly into
- * `createAgentSession`, which is the behaviour that matters.
+ * The resolved `Model` object is passed explicitly into `createAgentSession`,
+ * which is the behaviour that matters.
  *
  * SECURITY: the bridge never reads, logs or forwards a credential. It reports
  * only which providers are configured and whether a token could be obtained.
  */
 
 import {
-  AuthStorage,
   DefaultResourceLoader,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
   createAgentSession,
   getAgentDir,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 
 import type { AnalyzerConfig, ThinkingLevel } from './config.ts';
 
@@ -44,8 +43,8 @@ export type PiModel = {
 };
 
 export type PiRuntime = {
-  authStorage: ReturnType<typeof AuthStorage.create>;
-  registry: ReturnType<typeof ModelRegistry.create>;
+  modelRuntime: ModelRuntime;
+  registry: ModelRegistry;
   agentDir: string;
   cwd: string;
 };
@@ -79,11 +78,11 @@ export class PiUnavailable extends Error {
   }
 }
 
-export function createRuntime(options: { cwd?: string } = {}): PiRuntime {
-  const authStorage = AuthStorage.create();
+export async function createRuntime(options: { cwd?: string } = {}): Promise<PiRuntime> {
+  const modelRuntime = await ModelRuntime.create();
   return {
-    authStorage,
-    registry: ModelRegistry.create(authStorage),
+    modelRuntime,
+    registry: new ModelRegistry(modelRuntime),
     agentDir: getAgentDir(),
     cwd: options.cwd ?? process.cwd(),
   };
@@ -120,14 +119,14 @@ export async function resolveAnalyzer(
     };
   }
 
-  // `getAvailable()` only proves a credential EXISTS. `getApiKey` is the call
+  // `getAvailable()` only proves a credential EXISTS. `getApiKeyForProvider` is the call
   // the request path actually makes: it refreshes an expired OAuth token and
   // returns undefined when that refresh fails. Checking it here turns a
   // confusing mid-analysis "No API key for provider" from deep inside the
   // provider into an actionable startup message.
   let token: string | undefined;
   try {
-    token = await runtime.authStorage.getApiKey(config.provider);
+    token = await runtime.registry.getApiKeyForProvider(config.provider);
   } catch (error) {
     return {
       ok: false,
@@ -141,7 +140,7 @@ export async function resolveAnalyzer(
   }
 
   if (!token) {
-    const status = runtime.authStorage.getAuthStatus(config.provider);
+    const status = runtime.registry.getProviderAuthStatus(config.provider);
     return {
       ok: false,
       failure: {
@@ -223,8 +222,7 @@ export async function createSession(
   const { session } = await createAgentSession({
     cwd: runtime.cwd,
     agentDir: runtime.agentDir,
-    authStorage: runtime.authStorage,
-    modelRegistry: runtime.registry,
+    modelRuntime: runtime.modelRuntime,
     model: analyzer.model as never,
     thinkingLevel: analyzer.thinkingLevel as never,
     noTools: 'all',
@@ -253,7 +251,7 @@ export function authenticatedProviders(runtime: PiRuntime): string[] {
   return [...providers].sort();
 }
 
-function safeAvailable(registry: ReturnType<typeof ModelRegistry.create>): PiModel[] {
+function safeAvailable(registry: ModelRegistry): PiModel[] {
   try {
     return (registry.getAvailable() as unknown as PiModel[]) ?? [];
   } catch {

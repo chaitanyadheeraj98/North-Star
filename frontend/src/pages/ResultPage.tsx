@@ -41,9 +41,9 @@ export function ResultPage({ onImported }: { onImported?: () => void }) {
       <Card>
         <h2 className="text-lg font-medium text-slate-100">Finished the task?</h2>
         <p className="mt-1 text-sm text-slate-400">
-          Run the <code className="rounded bg-slate-800 px-1">router-outcome</code> skill in
-          Claude or Codex (or just ask it to &quot;generate the router result receipt&quot;), then
-          paste the whole block below.
+          The <code className="rounded bg-slate-800 px-1">router-outcome</code> skill submits the
+          receipt on its own when the task is done. Paste a block here only if it reports that the
+          router was unreachable.
         </p>
 
         <label htmlFor="receipt-input" className="sr-only">

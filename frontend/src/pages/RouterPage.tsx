@@ -137,6 +137,24 @@ export function RouterPage({
         </Banner>
       )}
 
+      {result?.preparation && (
+        <Banner
+          tone={result.preparation.mode === 'direct' ? 'success' : 'info'}
+          title={
+            result.preparation.mode === 'direct'
+              ? 'Ready to execute'
+              : result.preparation.mode === 'plan'
+                ? 'Write an implementation plan first'
+                : 'Write a spec and an implementation plan first'
+          }
+        >
+          {result.preparation.headline}
+          {result.preparation.reasons.length > 0 && ` (${result.preparation.reasons.join(', ')})`}
+          {result.preparation.mode !== 'direct' &&
+            ' The handoff below already tells the model to do this before it writes code.'}
+        </Banner>
+      )}
+
       {result && recommendations && fingerprint && (
         <p className="text-sm text-slate-400">Independent recommendations. Choose which provider to use.</p>
       )}

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..db.models import RoutingDecisionRow, Task, TaskFingerprintRow
 from ..schemas.enums import TaskStatus
 from ..schemas.routing_decision import RoutingDecision
+from .preparation import Preparation, handoff_steps
 
 HANDOFF_OPEN = "[LLM-ROUTER]"
 HANDOFF_CLOSE = "[/LLM-ROUTER]"
@@ -81,13 +82,19 @@ def fingerprint_row(session: Session, task: Task) -> TaskFingerprintRow | None:
 
 
 def build_handoff(
-    task: Task, decision: RoutingDecision, router_version: str, model_id: str = ""
+    task: Task,
+    decision: RoutingDecision,
+    router_version: str,
+    model_id: str = "",
+    preparation: Preparation | None = None,
 ) -> str:
     """The text the user pastes into Claude Code or the Codex CLI.
 
     The metadata block is what lets the outcome skill reconnect a receipt to
     this routing decision. `model_id` carries the provider-facing identifier so
     the user selects the right model rather than guessing from a display name.
+    `preparation`, when it calls for a plan or spec, puts those steps ahead of
+    the implementation so one handoff covers the whole sequence.
     """
     lines = [
         HANDOFF_OPEN,
@@ -98,19 +105,21 @@ def build_handoff(
     ]
     if model_id:
         lines.append(f"recommended_model_id={model_id}")
+    if preparation is not None:
+        lines.append(f"preparation={preparation.mode}")
+    lines.extend([f"router_version={router_version}", HANDOFF_CLOSE, ""])
+    if preparation is not None:
+        lines.extend(handoff_steps(preparation))
     lines.extend(
         [
-            f"router_version={router_version}",
-            HANDOFF_CLOSE,
-            "",
             "TASK",
             "",
             task.original_task.rstrip(),
             "",
             "---",
-            "When the work is finished, run the router-outcome skill "
-            "(or ask: \"generate the router result receipt\") and paste the "
-            "[LLM-ROUTER-RESULT] block back into the router's Result page.",
+            "When the work is finished, run the router-outcome skill without waiting to be "
+            "asked. It writes the [LLM-ROUTER-RESULT] receipt and submits it to the router "
+            "itself.",
         ]
     )
     return "\n".join(lines)

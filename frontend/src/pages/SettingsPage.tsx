@@ -12,6 +12,7 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [update, setUpdate] = useState<ModelUpdateResult | null>(null);
 
   async function load() {
@@ -42,6 +43,25 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
       setError((err as ApiError).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function reconnect() {
+    if (reconnecting) return;
+    setReconnecting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.piReconnect();
+      await load();
+      setModels((await api.piModels().catch(() => ({ models: [] }))).models ?? []);
+      onChanged?.();
+      if (result.available) setNotice('Reconnected to Pi.');
+      else setError(result.note ?? 'Pi is still unavailable after reconnecting.');
+    } catch (err) {
+      setError((err as ApiError).message);
+    } finally {
+      setReconnecting(false);
     }
   }
 
@@ -106,8 +126,8 @@ export function SettingsPage({ onChanged }: { onChanged?: () => void }) {
               <span className="font-mono text-xs text-slate-500">{data.pi_bridge_url}</span>
             </div>
           </div>
-          <Button variant="secondary" onClick={() => void load()}>
-            Recheck
+          <Button variant="secondary" onClick={() => void reconnect()} disabled={reconnecting}>
+            {reconnecting ? 'Reconnecting...' : 'Reconnect'}
           </Button>
         </div>
 
@@ -451,8 +471,8 @@ function AnalyzerPicker({
 
       {models.length === 0 && (
         <p className="mt-4 text-xs text-amber-300">
-          No models listed, because the Pi bridge is not reachable. Start it with
-          scripts/start-pi.ps1 and press Recheck.
+          No models listed, because the Pi bridge is not reachable. The app reconnects on its
+          own in the background; press Reconnect above to do it now.
         </p>
       )}
 

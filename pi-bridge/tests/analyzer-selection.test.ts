@@ -39,19 +39,17 @@ function fakeRuntime(options: {
   const models = options.models ?? MODELS;
   const resolvable = new Set(options.resolvable ?? ['kimi-coding', 'openai-codex']);
   return {
-    authStorage: {
-      async getApiKey(provider: string) {
-        if (options.throwOnAuth) throw new Error('auth backend exploded');
-        return resolvable.has(provider) ? 'token-'.padEnd(40, 'x') : undefined;
-      },
-      getAuthStatus(provider: string) {
-        return { configured: models.some((m) => m.provider === provider) };
-      },
-    },
     registry: {
       find: (provider: string, id: string) =>
         models.find((m) => m.provider === provider && m.id === id),
       getAvailable: () => models,
+      async getApiKeyForProvider(provider: string) {
+        if (options.throwOnAuth) throw new Error('auth backend exploded');
+        return resolvable.has(provider) ? 'token-'.padEnd(40, 'x') : undefined;
+      },
+      getProviderAuthStatus(provider: string) {
+        return { configured: models.some((m) => m.provider === provider) };
+      },
     },
     agentDir: '/tmp/agent',
     cwd: '/tmp',
@@ -173,10 +171,10 @@ test('only Pi thinking levels are accepted', () => {
 
 // --- Boot configuration -----------------------------------------------------
 
-test('boot config defaults to openai-codex / gpt-5.5 / low', () => {
+test('boot config defaults to openai-codex / gpt-6-astra / low', () => {
   const config = bootConfig({} as NodeJS.ProcessEnv);
   assert.equal(config.provider, 'openai-codex');
-  assert.equal(config.model, 'gpt-5.5');
+  assert.equal(config.model, 'gpt-6-astra');
   assert.equal(config.thinkingLevel, 'low');
   assert.equal(config.source.provider, 'default');
 });

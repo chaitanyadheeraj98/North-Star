@@ -73,7 +73,7 @@ else {
 
 $pi = Get-Command pi -ErrorAction SilentlyContinue
 if ($null -eq $pi) {
-    Write-Warn "The 'pi' CLI is not on PATH. Install it with: npm install -g @mariozechner/pi-coding-agent"
+    Write-Warn "The 'pi' CLI is not on PATH. Install it with: npm install -g @earendil-works/pi-coding-agent"
     Write-Warn "The bridge can still run, but Pi must be authenticated before it can classify anything."
 }
 else {

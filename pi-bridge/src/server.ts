@@ -40,7 +40,9 @@ import {
 } from './pi.ts';
 import { ResearchFailure, researchModels } from './researcher.ts';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
+/** Lets the backend tell a restarted bridge from the one it asked to restart. */
+const STARTED_AT = new Date().toISOString();
 
 const envFile = loadDotEnv();
 
@@ -84,7 +86,7 @@ async function boot(): Promise<void> {
   }
 
   try {
-    runtime = createRuntime({});
+    runtime = await createRuntime({});
   } catch (error) {
     runtime = undefined;
     configError = error instanceof Error ? error.message : String(error);
@@ -155,6 +157,7 @@ async function handleHealth(res: ServerResponse): Promise<void> {
       status: 'misconfigured',
       pi_available: false,
       version: VERSION,
+      started_at: STARTED_AT,
       configured_provider: null,
       configured_model: null,
       configured_effort: null,
@@ -173,6 +176,7 @@ async function handleHealth(res: ServerResponse): Promise<void> {
   const { config, resolution } = current;
   const base = {
     version: VERSION,
+    started_at: STARTED_AT,
     configured_provider: config.provider,
     configured_model: config.model,
     configured_effort: config.thinkingLevel,

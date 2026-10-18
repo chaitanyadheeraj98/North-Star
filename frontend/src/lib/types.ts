@@ -138,8 +138,18 @@ export type TaskResponse = {
   fingerprint: TaskFingerprint | null;
   analyzer: AnalyzerInfo | null;
   recommendation: RoutingRecommendations | null;
+  preparation?: Preparation | null;
   handoffs: Record<string, string>;
   execution?: Record<string, unknown> | null;
+};
+
+/** Whether to plan, or spec and plan, before executing. Decided on the backend. */
+export type Preparation = {
+  mode: 'direct' | 'plan' | 'spec_and_plan';
+  headline: string;
+  reasons: string[];
+  spec_path: string | null;
+  plan_path: string | null;
 };
 
 export type HandoffResponse = {
