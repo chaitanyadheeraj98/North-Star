@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from './lib/api.ts';
-import { shouldAutoReconnect } from './lib/reconnect.ts';
+import { nextMissCount, shouldAutoReconnect } from './lib/reconnect.ts';
 import type { PiStatus, SettingsResponse } from './lib/types.ts';
 import { AnalyticsPage } from './pages/AnalyticsPage.tsx';
 import { HistoryPage } from './pages/HistoryPage.tsx';
@@ -49,6 +49,7 @@ export function App() {
   // restart it without being asked. See shouldAutoReconnect for when it does not.
   useEffect(() => {
     let lastAttempt = -Infinity;
+    let misses = 0;
     let busy = false;
     const timer = window.setInterval(() => {
       if (busy) return;
@@ -57,8 +58,10 @@ export function App() {
         .then(async (settings) => {
           setPi(settings.pi);
           setPreferences(settings.preferences);
-          if (!shouldAutoReconnect(settings.pi, lastAttempt, Date.now())) return;
+          misses = nextMissCount(settings.pi, misses);
+          if (!shouldAutoReconnect(misses, lastAttempt, Date.now())) return;
           lastAttempt = Date.now();
+          misses = 0;
           busy = true;
           try {
             setPi(await api.piReconnect());

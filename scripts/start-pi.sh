@@ -6,7 +6,15 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root/pi-bridge"
 
-[ -d node_modules ] || npm install --no-audit --no-fund
+# "node_modules exists" is not "node_modules is current": re-run npm ci whenever
+# package-lock.json changed since the last install (see scripts/bridge-deps.ps1).
+stamp=node_modules/.northstar-lock.sha256
+want="$( (sha256sum package-lock.json 2>/dev/null || shasum -a 256 package-lock.json) | cut -d' ' -f1)"
+if [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
+  echo "pi-bridge dependencies are missing or out of date; running npm ci"
+  npm ci --no-audit --no-fund
+  printf '%s' "$want" > "$stamp"
+fi
 
 export PI_BRIDGE_HOST="${PI_BRIDGE_HOST:-127.0.0.1}"
 export PI_BRIDGE_PORT="${PI_BRIDGE_PORT:-31415}"

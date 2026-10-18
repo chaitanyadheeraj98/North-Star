@@ -683,6 +683,57 @@ Every fingerprint, decision and receipt is also stored as raw JSON alongside the
 extracted columns, so nothing an analyzer or agent reported is lost because this
 schema version had no field for it.
 
+### Updating an existing install
+
+Run from the repository root after pulling a new version:
+
+```powershell
+git pull
+Copy-Item .\data\router.db ".\data\router-$(Get-Date -f yyyyMMdd).db"   # optional backup
+
+# 1. Containers.
+docker compose up -d --build
+
+# 2. Watchdog and bridge. Stops the old watchdog, starts the new one, and has it
+#    restart the bridge: stop the bridge, run `npm ci` in pi-bridge if
+#    package-lock.json changed, start the bridge.
+.\scripts\install-pi-autostart.ps1
+
+# 3. The router-outcome skill copies in ~/.claude, ~/.codex and ~/.pi.
+.\scripts\install-skills.ps1
+```
+
+Confirm step 2 in `pi-bridge\watchdog.log`: after an update that changes the
+bridge's dependencies (such as the Pi SDK move to
+`@earendil-works/pi-coding-agent`) it shows `running npm ci`, then
+`pi-bridge dependencies installed`, then `starting bridge`. That restart can
+take a minute.
+
+Two things not to do instead:
+
+- **Do not run `npm ci` while the bridge is running.** On Windows the running
+  bridge holds native addons in `pi-bridge\node_modules` open, so `npm ci`
+  fails partway through deleting the folder. If you run the bridge by hand,
+  stop it first; `start-pi.ps1` then runs `npm ci` itself when needed.
+- **Do not restart the watchdog with `Stop-ScheduledTask` / `Start-ScheduledTask`.**
+  Stopping the task does not end the watchdog: the task reports Ready while
+  the old script keeps running. Re-run the installer.
+
+Then **check the analyzer model**, because neither of the two places it is
+configured is changed by an update:
+
+```powershell
+Select-String '^PI_(PROVIDER|MODEL)=' .env                                 # the bridge default
+(Invoke-RestMethod http://localhost:3000/api/settings).preferences |
+    Select-Object analyzer_provider, analyzer_model                         # the Settings pin, which wins
+```
+
+If either still names a model your subscription no longer serves (for example
+`gpt-5.5` on a ChatGPT account), change `PI_MODEL` in `.env` and pick a current
+model under **Settings -> Analyzer model**. `/health` cannot catch this: it
+reports `ok` for any model in Pi's catalog, and the provider only rejects it
+when an analysis runs. Run one task afterwards to be sure.
+
 ---
 
 ## 13. Tests
@@ -732,11 +783,13 @@ cd frontend;   npm test;          cd ..
 
 **"Pi bridge unavailable" in the UI.**
 The bridge is not running. With the watchdog installed
-(`.\scripts\install-pi-autostart.ps1`, once) the app restarts it on its own
-within about 30 seconds, and **Settings -> Reconnect** does it immediately. It
-only restarts a bridge that does not answer: one that answers but is not
-logged in or names an unknown model is left alone, because a restart cannot
-fix that. Without the watchdog, start it with `.\scripts\start-pi.ps1`.
+(`.\scripts\install-pi-autostart.ps1`, once) a crashed bridge is restarted
+within about 30 seconds, and **Settings -> Reconnect** does it immediately. An
+open app tab also restarts it, but only after two unreachable checks in a row
+(about a minute), so a bridge that is merely slow is not restarted
+mid-analysis. Nothing restarts a bridge that answers but is not logged in or
+names an unknown model, because a restart cannot fix that.
+Without the watchdog, start it with `.\scripts\start-pi.ps1`.
 Check with `curl http://127.0.0.1:31415/health`.
 
 **The bridge starts but says `auth: NOT READY`.**

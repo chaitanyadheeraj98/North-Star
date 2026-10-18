@@ -49,22 +49,18 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $bridge = Join-Path $root 'pi-bridge'
 
-if (-not (Test-Path (Join-Path $bridge 'node_modules'))) {
-    Write-Host "Installing Pi bridge dependencies (first run)..." -ForegroundColor Cyan
-    Push-Location $bridge
-    try {
-        npm install --no-audit --no-fund
-        if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-    }
-    finally { Pop-Location }
-}
-
 $existing = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($existing) {
     Write-Host "Something is already listening on 127.0.0.1:$Port." -ForegroundColor Yellow
     Write-Host "If that is an old bridge, stop it first:" -ForegroundColor Yellow
     Write-Host "  Get-NetTCPConnection -LocalPort $Port -State Listen | ForEach-Object { Stop-Process -Id `$_.OwningProcess -Force }"
     exit 1
+}
+
+# After the port check: npm ci must never run under a live bridge.
+. (Join-Path $PSScriptRoot 'bridge-deps.ps1')
+if ((Sync-BridgeDeps $bridge { param($m) Write-Host $m -ForegroundColor Cyan }) -in 'failed', 'busy') {
+    throw "Could not install the Pi bridge dependencies (npm ci in $bridge); see the message above."
 }
 
 $env:PI_BRIDGE_HOST = '127.0.0.1'
