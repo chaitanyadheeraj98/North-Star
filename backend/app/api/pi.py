@@ -1,8 +1,9 @@
 """Pi bridge status passthrough, plus reconnect.
 
-Reconnect only restarts the bridge process; it touches no credentials. The backend never proxies credentials, never asks the bridge for
-secrets, and never exposes anything beyond which provider and model the
-analyzer is currently using.
+Reconnect only restarts the bridge process; it touches no credentials. The
+backend never proxies credentials, never asks the bridge for secrets, and never
+exposes anything beyond which provider and model the analyzer is currently
+using.
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ from typing import Any
 from fastapi import APIRouter
 
 from ..services.pi_service import PiBridgeAnalyzer
-from .deps import PiDep
+from .deps import PiDep, require_header
+
+RECONNECT_HEADER = "X-NorthStar-Reconnect"
 
 router = APIRouter(prefix="/api/pi", tags=["pi"])
 
@@ -22,7 +25,8 @@ async def pi_status(pi: PiBridgeAnalyzer = PiDep) -> dict[str, Any]:
     return await pi.status()
 
 
-@router.post("/reconnect")
+# Bodyless POST, so without the header any web page could restart the bridge.
+@router.post("/reconnect", dependencies=[require_header(RECONNECT_HEADER)])
 async def pi_reconnect(pi: PiBridgeAnalyzer = PiDep) -> dict[str, Any]:
     return await pi.reconnect()
 

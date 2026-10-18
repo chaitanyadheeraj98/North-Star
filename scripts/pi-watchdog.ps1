@@ -9,7 +9,8 @@
     fresh bridge. Docker is never touched. Log: pi-bridge\watchdog.log
 
     The Reconnect button reaches it through data\pi-restart.request: the backend
-    container writes the file, this script deletes it and restarts the bridge.
+    container writes the file, this script deletes it within 3s and restarts the
+    bridge - including a healthy one started by hand, since that is the request.
 #>
 param([int]$Port = 31415)
 
@@ -31,7 +32,9 @@ function Restart-Bridge($reason) {
     Log "starting bridge ($reason)"
     Start-Process $node -ArgumentList 'src/server.ts' -WorkingDirectory $bridge -WindowStyle Hidden `
         -RedirectStandardOutput (Join-Path $bridge 'bridge.out.log') -RedirectStandardError (Join-Path $bridge 'bridge.err.log')
-    Start-Sleep 15
+    # No sleep here: the caller resets $sinceCheck, which gives the new bridge 30s
+    # before its first health check, and the next restart request is still seen
+    # within 3s (the backend gives up waiting for pickup after 10s).
 }
 
 $env:PI_BRIDGE_HOST = '127.0.0.1'

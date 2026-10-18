@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from './lib/api.ts';
+import { shouldAutoReconnect } from './lib/reconnect.ts';
 import type { PiStatus, SettingsResponse } from './lib/types.ts';
 import { AnalyticsPage } from './pages/AnalyticsPage.tsx';
 import { HistoryPage } from './pages/HistoryPage.tsx';
@@ -44,11 +45,10 @@ export function App() {
 
   useEffect(refreshStatus, [refreshStatus]);
 
-  // Background reconnect: poll every 30s and, when Pi drops, restart the bridge
-  // without being asked. At most one attempt every two minutes, so a problem a
-  // restart cannot fix (for example an expired login) does not loop.
+  // Background reconnect: poll every 30s and, when the bridge stops answering,
+  // restart it without being asked. See shouldAutoReconnect for when it does not.
   useEffect(() => {
-    let lastAttempt = 0;
+    let lastAttempt = -Infinity;
     let busy = false;
     const timer = window.setInterval(() => {
       if (busy) return;
@@ -57,7 +57,7 @@ export function App() {
         .then(async (settings) => {
           setPi(settings.pi);
           setPreferences(settings.preferences);
-          if (settings.pi.available || Date.now() - lastAttempt < 120_000) return;
+          if (!shouldAutoReconnect(settings.pi, lastAttempt, Date.now())) return;
           lastAttempt = Date.now();
           busy = true;
           try {

@@ -139,7 +139,10 @@ export const api = {
 
   /** Restarts the bridge on the host and waits (up to a minute) for it. */
   piReconnect: () =>
-    request<PiStatus & { reconnect: string }>('/api/pi/reconnect', { method: 'POST' }),
+    request<PiStatus & { reconnect: string }>('/api/pi/reconnect', {
+      method: 'POST',
+      headers: { 'X-NorthStar-Reconnect': '1' },
+    }),
 
   piModels: () => request<{ models: PiModelOption[] }>('/api/pi/models'),
 

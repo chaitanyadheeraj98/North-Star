@@ -32,6 +32,14 @@ from .analyzer import AnalyzerError, AnalyzerOverrides, TaskAnalyzer
 #: no other way to restart a host process.
 RESTART_REQUEST = "pi-restart.request"
 
+#: The watchdog checks for the request every 3s. Still on disk after this long
+#: means no watchdog is running, so there is no point waiting for a restart.
+PICKUP_SECONDS = 10.0
+
+#: One reconnect at a time per backend process (the app runs one worker).
+_reconnect_lock = asyncio.Lock()
+_last_reconnect: tuple[float, dict[str, Any]] | None = None
+
 
 class PiBridgeAnalyzer(TaskAnalyzer):
     """Talks to the host-local Pi bridge over HTTP."""
@@ -131,45 +139,79 @@ class PiBridgeAnalyzer(TaskAnalyzer):
         async with httpx.AsyncClient(timeout=self._settings.pi_timeout_seconds) as client:
             return await client.post(f"{self._base_url}/analyze", json=payload)
 
-    async def reconnect(self, wait_seconds: float = 60.0) -> dict[str, Any]:
+    async def reconnect(
+        self, wait_seconds: float = 60.0, pickup_seconds: float = PICKUP_SECONDS
+    ) -> dict[str, Any]:
         """Restart the bridge through the host watchdog and wait for it. Never raises.
 
         A fresh process re-reads .env, Pi's credentials (a /login done
-        elsewhere) and Pi's model list. When no watchdog picks the request up,
-        fall back to the bridge's in-place POST /reload.
+        elsewhere) and Pi's model list. When no watchdog picks the request up
+        within `pickup_seconds`, fall back to the bridge's in-place POST /reload.
+        `wait_seconds` bounds only the wait for a restart already under way.
+
+        Calls are serialised. A caller that queued behind another reconnect
+        gets that result instead of requesting a second restart, which would
+        kill the bridge the first one just started.
         """
+        global _last_reconnect
+        asked = time.monotonic()
+        async with _reconnect_lock:
+            if _last_reconnect is not None and _last_reconnect[0] >= asked:
+                return _last_reconnect[1]
+            result = await self._restart(wait_seconds, pickup_seconds)
+            _last_reconnect = (time.monotonic(), result)
+            return result
+
+    async def _restart(self, wait_seconds: float, pickup_seconds: float) -> dict[str, Any]:
         before = await self.status()
         flag = self._settings.data_dir / RESTART_REQUEST
         try:
             flag.parent.mkdir(parents=True, exist_ok=True)
             flag.write_text(str(time.time()), encoding="utf-8")
         except OSError as exc:
-            return {**await self._reload(), "reconnect": "failed", "note": f"Cannot write {flag}: {exc}"}
+            return await self._fallback(f"Cannot write {flag}: {exc}.")
 
-        deadline = time.monotonic() + wait_seconds
-        while time.monotonic() < deadline:
-            await asyncio.sleep(2)
-            if flag.exists():
-                continue  # the watchdog has not picked it up yet
+        started = time.monotonic()
+        while flag.exists():
+            if time.monotonic() - started >= pickup_seconds:
+                flag.unlink(missing_ok=True)
+                return await self._fallback(
+                    "The Pi watchdog did not pick up the restart request, so it is probably "
+                    "not running. Run scripts/install-pi-autostart.ps1 once; it starts with "
+                    "Windows after that."
+                )
+            await asyncio.sleep(1)
+
+        # Picked up: the watchdog is killing the old bridge and starting a new one.
+        while True:
             current = await self.status()
-            restarted = current.get("started_at") != before.get("started_at")
-            if current["available"] and restarted:
+            # A new process that answers is a finished restart, even when it then
+            # reports a problem (not logged in, unknown model). Waiting longer
+            # would not change that, and the note says what is wrong.
+            if current["status"] != "unavailable" and current.get("started_at") != before.get(
+                "started_at"
+            ):
                 return {**current, "reconnect": "restarted"}
+            if time.monotonic() - started >= wait_seconds:
+                return {
+                    **current,
+                    "reconnect": "failed",
+                    "note": (
+                        f"The watchdog restarted the bridge, but it did not answer within "
+                        f"{wait_seconds:.0f}s. See pi-bridge/bridge.err.log."
+                    ),
+                }
+            await asyncio.sleep(2)
 
-        if flag.exists():
-            flag.unlink(missing_ok=True)
-            status = await self._reload()
-            if status["available"]:
-                return {**status, "reconnect": "reloaded"}
-            return {
-                **status,
-                "reconnect": "failed",
-                "note": (
-                    "The Pi watchdog is not running, so the bridge could not be restarted. "
-                    "Run scripts/install-pi-autostart.ps1 once; it starts with Windows after that."
-                ),
-            }
-        return {**await self.status(), "reconnect": "failed"}
+    async def _fallback(self, reason: str) -> dict[str, Any]:
+        status = await self._reload()
+        if status["available"]:
+            return {**status, "reconnect": "reloaded"}
+        return {
+            **status,
+            "reconnect": "failed",
+            "note": " ".join(filter(None, [reason, status.get("note")])),
+        }
 
     async def _reload(self) -> dict[str, Any]:
         try:

@@ -74,7 +74,7 @@ You do the work
  ↓
 The router-outcome skill writes an execution receipt
  ↓
-You paste the receipt back
+The skill submits the receipt to the router itself
  ↓
 Statistics update; the next similar task routes better
 ```
@@ -312,18 +312,37 @@ recommended_provider=claude
 recommended_model=opus_5
 recommended_effort=low
 recommended_model_id=claude-opus-5
+preparation=plan
 router_version=1.0.0
 [/LLM-ROUTER]
+
+PREPARATION (do this before writing any code)
+
+1. Write an implementation plan to docs/plans/RT-000001-plan.md: ...
+2. Then implement the plan step by step. ...
 
 TASK
 
 <your task>
 
 ---
-When the work is finished, run the router-outcome skill (or ask: "generate the
-router result receipt") and paste the [LLM-ROUTER-RESULT] block back into the
-router's Result page.
+When the work is finished, run the router-outcome skill without waiting to be
+asked. It writes the [LLM-ROUTER-RESULT] receipt and submits it to the router
+itself.
 ```
+
+The `PREPARATION` section appears only when the Router page advises it. Each
+task gets one of three verdicts, computed from the fingerprint by fixed rules
+in `backend/app/services/preparation.py`:
+
+| Verdict | When | The handoff asks the model to |
+| --- | --- | --- |
+| Ready to execute | clear prompt, small task | just do it |
+| Plan first | clear prompt, complex or wide task | write `docs/plans/<id>-plan.md`, then implement it |
+| Spec and plan first | underspecified prompt, non-trivial task | write `docs/specs/<id>-spec.md`, then the plan, then implement |
+
+A vague but trivial task still runs directly: a spec for a one-line change
+costs more than getting it slightly wrong.
 
 5. Select that model and effort in Claude Code or the Codex CLI, paste, and do
    the work.
@@ -335,13 +354,9 @@ to the routing decision. Keep it in the conversation.
 
 ## 8. Importing your first receipt
 
-When the work is done, in the same conversation:
-
-```
-generate the router result receipt
-```
-
-The skill inspects what happened and emits:
+When the work is done, the agent runs the `router-outcome` skill on its own
+(the handoff tells it to; you can also ask "generate the router result
+receipt"). The skill inspects what happened and emits:
 
 ```
 [LLM-ROUTER-RESULT]
@@ -349,7 +364,20 @@ The skill inspects what happened and emits:
 [/LLM-ROUTER-RESULT]
 ```
 
-Copy the whole block, open the **Result** tab, paste, press **Import result**.
+and submits it itself:
+
+```
+curl -X POST http://localhost:3000/api/results/import-text \
+  -H "Content-Type: text/plain; charset=utf-8" -H "X-NorthStar-Receipt: 1" \
+  --data-binary @receipt.txt
+```
+
+The `X-NorthStar-Receipt` header is required. A web page could otherwise send
+a text/plain POST to localhost without a CORS preflight; with the header, the
+browser must ask first, and the loopback-only CORS policy refuses.
+
+If the agent reports that the router was unreachable, copy the block, open the
+**Result** tab, paste, and press **Import result**.
 
 You will see what was recorded and what it changed:
 
@@ -703,8 +731,13 @@ cd frontend;   npm test;          cd ..
 ## 14. Troubleshooting
 
 **"Pi bridge unavailable" in the UI.**
-The bridge is not running. Start it with `.\scripts\start-pi.ps1`. Check with
-`curl http://127.0.0.1:31415/health`.
+The bridge is not running. With the watchdog installed
+(`.\scripts\install-pi-autostart.ps1`, once) the app restarts it on its own
+within about 30 seconds, and **Settings -> Reconnect** does it immediately. It
+only restarts a bridge that does not answer: one that answers but is not
+logged in or names an unknown model is left alone, because a restart cannot
+fix that. Without the watchdog, start it with `.\scripts\start-pi.ps1`.
+Check with `curl http://127.0.0.1:31415/health`.
 
 **The bridge starts but says `auth: NOT READY`.**
 The configured provider cannot produce a token. `getAvailable()` only checks
@@ -816,8 +849,10 @@ Deliberately not built in V1:
   `backend_data_integrity` tasks share a statistics bucket. Embedding-based
   retrieval of the 30–50 most similar historical tasks is the V1.5 feature that
   would most improve precision.
-- **No automatic receipt ingestion.** You copy a handoff out and paste a receipt
-  back. Automating that needs CLI or IDE integration.
+- **Receipt submission depends on the agent.** The skill posts the receipt
+  itself, but an agent that is sandboxed without network access, or a
+  `FRONTEND_PORT` other than 3000, means pasting it on the Result page.
+  You still copy the handoff in by hand.
 - **No automatic execution.** The router recommends; you run it.
 - **Model updates require review for new models.** Discovery cannot establish
   capability priors. New entries remain disabled until reviewed.

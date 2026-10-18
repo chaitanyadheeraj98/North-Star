@@ -188,12 +188,13 @@ Do not ask the user to copy or paste anything. Write the whole block, markers
 included, to a temporary file and POST it as plain text:
 
 ```
-curl -sS -X POST http://localhost:3000/api/results/import-text -H "Content-Type: text/plain; charset=utf-8" --data-binary @<path-to-receipt-file>
+curl -sS -X POST http://localhost:3000/api/results/import-text -H "Content-Type: text/plain; charset=utf-8" -H "X-NorthStar-Receipt: 1" --data-binary @<path-to-receipt-file>
 ```
 
 Write the file with your file-writing tool, not `echo`, so quotes and newlines
 survive. Delete the file afterwards. On Windows without `curl`, use
-`Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/results/import-text -ContentType 'text/plain; charset=utf-8' -InFile <path>`.
+`Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/results/import-text -ContentType 'text/plain; charset=utf-8' -Headers @{ 'X-NorthStar-Receipt' = '1' } -InFile <path>`.
+The `X-NorthStar-Receipt: 1` header is required; without it the router answers 403.
 
 - **HTTP 200**: tell the user in one line that the receipt was recorded, and
   repeat the `learning_summary` from the response.
