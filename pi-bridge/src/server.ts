@@ -17,7 +17,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
-import { AnalyzerFailure, analyzeTask } from './analyzer.ts';
+import { AnalyzerFailure, INPUT_TYPES, analyzeTask, isInputType } from './analyzer.ts';
 import type { ResearchRequestBody } from './capability-research.ts';
 import {
   AnalyzerConfigError,
@@ -239,6 +239,14 @@ async function handleAnalyze(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
+  const inputType = payload.input_type ?? 'task';
+  if (!isInputType(inputType)) {
+    send(res, 400, {
+      error: `unknown input_type ${JSON.stringify(inputType)}; expected one of ${INPUT_TYPES.join(', ')}`,
+    });
+    return;
+  }
+
   // Per-request overrides are what the Settings page ultimately drives, so a
   // preference change takes effect on the next analysis with no restart.
   const current = await currentResolution({
@@ -278,10 +286,10 @@ async function handleAnalyze(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   try {
-    const result = await analyzeTask(runtime!, resolution.analyzer, task, families);
+    const result = await analyzeTask(runtime!, resolution.analyzer, task, families, inputType);
     console.log(
       `analyze ok  ${result.analyzer.provider}/${result.analyzer.model} ` +
-        `(${result.analyzer.thinking_level})  family=${result.fingerprint.task_family} ` +
+        `(${result.analyzer.thinking_level})  input=${inputType}  family=${result.fingerprint.task_family} ` +
         `confidence=${result.fingerprint.confidence.toFixed(2)} ` +
         `repaired=${result.analyzer.repaired} ${result.analyzer.duration_ms}ms`,
     );

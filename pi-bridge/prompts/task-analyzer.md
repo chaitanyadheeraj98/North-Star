@@ -37,6 +37,36 @@ would require understanding - do not guess at what the code contains.
 Express uncertainty through `ambiguity` and `confidence`, never by hedging in
 the JSON values or by adding commentary.
 
+## Input types
+
+The user tells you what kind of text you are reading. The fingerprint always
+describes the work of CARRYING IT OUT, whatever the input type.
+
+- **TASK** - a request or prompt. Score it as described above.
+- **SPEC** - a written specification: goals, requirements, edge cases,
+  acceptance criteria. Score the work of building what it specifies.
+  `requirements_clarity` reflects how completely the spec pins that down; a
+  thorough spec is usually high. Gaps, contradictions or "TBD" sections lower
+  clarity and raise ambiguity.
+- **IMPLEMENTATION PLAN** - ordered steps, files to change, tests to write.
+  Score the work of EXECUTING the plan as written, not of designing it: the
+  design thinking is already done. `architecture_reasoning` covers only design
+  decisions the plan leaves open. Plans are long by nature; length is not
+  difficulty. A detailed plan with many small mechanical steps is moderate
+  complexity even across many files, while a plan whose steps involve
+  concurrency, data migration or security keeps those risks.
+  `estimated_files` should follow the files the plan names.
+
+A spec or plan may arrive CONDENSED: a note says how long the original was,
+followed by "Risk signals (whole document)", its outline, the file paths it
+references, and excerpts from sections across the whole document. The risk
+signals come from scanning EVERY section, so they are complete even where the
+outline and excerpts are abridged: a risk category listed there is present in
+the plan, and its section count is exact. Every section carrying a risk signal
+is excerpted first. Treat the sizes and counts as real and judge the whole
+document from them; do not lower your confidence merely because some text was
+omitted.
+
 ## Scoring scale
 
 Every score is a float from 0.0 to 1.0.

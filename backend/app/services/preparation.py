@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from ..schemas.enums import Scope
+from ..schemas.enums import InputType, Scope
 from ..schemas.task_fingerprint import TaskFingerprint
 
 PreparationMode = Literal["direct", "plan", "spec_and_plan"]
@@ -50,8 +50,18 @@ class Preparation(BaseModel):
     plan_path: str | None = None
 
 
-def recommend_preparation(fingerprint: TaskFingerprint, task_id: str) -> Preparation:
+def recommend_preparation(
+    fingerprint: TaskFingerprint, task_id: str, input_type: InputType = InputType.TASK
+) -> Preparation:
+    """What to do before executing. Never asks for a stage the input already is:
+    a plan is executed as it stands, and a spec is never told to write a spec."""
     fp = fingerprint
+    if input_type == InputType.PLAN:
+        return Preparation(
+            mode="direct",
+            headline="This is an implementation plan: hand it to the recommended model to execute.",
+            reasons=[],
+        )
     hard: list[str] = []
     if fp.complexity >= PLAN_COMPLEXITY:
         hard.append(f"complexity {fp.complexity:.2f}")
@@ -68,6 +78,29 @@ def recommend_preparation(fingerprint: TaskFingerprint, task_id: str) -> Prepara
     if fp.ambiguity >= SPEC_AMBIGUITY:
         vague.append(f"ambiguity {fp.ambiguity:.2f}")
     substantial = bool(hard) or fp.complexity >= SPEC_MIN_COMPLEXITY
+
+    if input_type == InputType.SPEC:
+        gaps = (
+            " The spec also leaves decisions open; the model will make the most reasonable "
+            "choice for each and record it, so tighten the spec first if they matter."
+            if vague
+            else ""
+        )
+        if hard:
+            return Preparation(
+                mode="plan",
+                headline=(
+                    "The spec is complex. Write an implementation plan from it first, then "
+                    "execute the plan." + gaps
+                ),
+                reasons=hard + vague,
+                plan_path=PLAN_PATH.format(task_id=task_id),
+            )
+        return Preparation(
+            mode="direct",
+            headline="The spec is small enough to implement directly." + gaps,
+            reasons=vague,
+        )
 
     if vague and substantial:
         return Preparation(
@@ -97,8 +130,12 @@ def recommend_preparation(fingerprint: TaskFingerprint, task_id: str) -> Prepara
     )
 
 
-def handoff_steps(preparation: Preparation) -> list[str]:
-    """Instructions for the executing agent, in the order it should follow them."""
+def handoff_steps(preparation: Preparation, spec_source: str | None = None) -> list[str]:
+    """Instructions for the executing agent, in the order it should follow them.
+
+    `spec_source` names the spec the plan is written from, when the input
+    itself is a spec: its repository path, or "below" when it is inline.
+    """
     if preparation.mode == "direct":
         return []
     steps = ["PREPARATION (do this before writing any code)", ""]
@@ -111,9 +148,17 @@ def handoff_steps(preparation: Preparation) -> list[str]:
             "decision open, make the most reasonable choice and record it under 'Assumptions'."
         )
         n += 1
+    if preparation.spec_path:
+        source = " from that spec"
+    elif spec_source == "below":
+        source = " from the spec below"
+    elif spec_source:
+        source = f" from the spec in {spec_source}"
+    else:
+        source = ""
     steps.append(
         f"{n}. Write an implementation plan to {preparation.plan_path}"
-        + (" from that spec" if preparation.spec_path else "")
+        + source
         + ": the files to change, ordered steps that each leave the build working, the "
         "tests that prove each step, and the risks with how to check for them."
     )

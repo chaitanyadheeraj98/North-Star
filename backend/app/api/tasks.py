@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,9 +16,11 @@ from ..schemas.api import (
     AnalyzerInfo,
     CreateTaskRequest,
     HandoffResponse,
+    TaskInput,
     TaskResponse,
     TaskSummary,
 )
+from ..schemas.enums import InputType
 from ..schemas.routing_decision import RoutingRecommendations
 from ..schemas.task_fingerprint import (
     AnalyzerMetadata,
@@ -26,6 +29,7 @@ from ..schemas.task_fingerprint import (
 )
 from ..services import routing_service, task_service
 from ..services.analyzer import AnalyzerError, AnalyzerOverrides, HeuristicAnalyzer
+from ..services.input_digest import condense_for_analysis
 from ..services.preparation import Preparation, recommend_preparation
 from .deps import ConfigDep, SessionDep, analyzer_for
 
@@ -45,7 +49,9 @@ async def create_task(
     re-run on its own.
     """
     try:
-        task = task_service.create_task(session, body.task)
+        task = task_service.create_task(
+            session, body.task, body.input_type, body.source_path, body.source_sha256
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -56,7 +62,7 @@ async def create_task(
 
     if body.analyze:
         envelope, analyzer_info = await _run_analyzer(
-            body.task, body.analyzer, body.allow_fallback, _analyzer_overrides(session)
+            task, body.analyzer, body.allow_fallback, _analyzer_overrides(session)
         )
         fingerprint = envelope.fingerprint
         decision, handoffs = _route_and_store(
@@ -72,6 +78,8 @@ async def create_task(
         original_task=task.original_task,
         status=task.status,
         created_at=task.created_at,
+        input=_task_input(task),
+        task_only=task_service.task_body(task),
         fingerprint=fingerprint,
         analyzer=analyzer_info,
         recommendation=decision,
@@ -92,7 +100,7 @@ async def analyze_task(
     request = body or AnalyzeRequest()
 
     envelope, analyzer_info = await _run_analyzer(
-        task.original_task,
+        task,
         request.analyzer,
         request.allow_fallback,
         _analyzer_overrides(session),
@@ -109,6 +117,8 @@ async def analyze_task(
         original_task=task.original_task,
         status=task.status,
         created_at=task.created_at,
+        input=_task_input(task),
+        task_only=task_service.task_body(task),
         fingerprint=envelope.fingerprint,
         analyzer=analyzer_info,
         recommendation=decision,
@@ -212,7 +222,9 @@ def get_handoff(
             task, decision, decision.router_version, model_id,
             _preparation(task, _stored_fingerprint(session, task)),
         ),
-        task_only=task.original_task,
+        # For a spec or plan file, the pointer to it: the file itself may be
+        # far too long to paste anywhere.
+        task_only=task_service.task_body(task),
         provider=decision.provider,
         model=decision.model,
         model_id=model_id,
@@ -261,7 +273,7 @@ def _analyzer_overrides(session: Session) -> AnalyzerOverrides:
 
 
 async def _run_analyzer(
-    task_text: str,
+    task: Task,
     source: str,
     allow_fallback: bool,
     overrides: AnalyzerOverrides | None = None,
@@ -270,10 +282,18 @@ async def _run_analyzer(
 
     When a fallback happens the response says so explicitly. A user who thinks
     Pi read their task deserves to know when a keyword matcher did instead.
+    A long spec or plan is condensed first; the task records that it was.
     """
+    input_type = _input_type(task)
+    # Up to a few seconds for a multi-megabyte plan: off the event loop, so
+    # status polls and Reconnect stay responsive meanwhile.
+    digest = await asyncio.to_thread(condense_for_analysis, task.original_task, input_type)
+    task_text = digest.text
+    if task.source is not None:
+        task.source.condensed = digest.condensed
     analyzer = analyzer_for(source)
     try:
-        envelope = await analyzer.analyze(task_text, overrides)
+        envelope = await analyzer.analyze(task_text, overrides, input_type)
         return envelope, AnalyzerInfo(
             provider=envelope.analyzer.provider,
             model=envelope.analyzer.model,
@@ -290,7 +310,7 @@ async def _run_analyzer(
                 detail={"message": str(exc), "detail": exc.detail},
             ) from exc
 
-    envelope = await HeuristicAnalyzer().analyze(task_text)
+    envelope = await HeuristicAnalyzer().analyze(task_text, input_type=input_type)
     return envelope, AnalyzerInfo(
         provider=envelope.analyzer.provider,
         model=envelope.analyzer.model,
@@ -331,8 +351,27 @@ def _route_and_store(
     return decision, _handoffs(config, task, decision, envelope.fingerprint)
 
 
+def _input_type(task: Task) -> InputType:
+    return InputType(task.source.input_type) if task.source else InputType.TASK
+
+
+def _task_input(task: Task) -> TaskInput:
+    source = task.source
+    if source is None:
+        return TaskInput(content_chars=len(task.original_task))
+    return TaskInput(
+        input_type=InputType(source.input_type),
+        source_path=source.source_path,
+        source_sha256=source.source_sha256,
+        content_chars=source.content_chars,
+        condensed=source.condensed,
+    )
+
+
 def _preparation(task: Task, fingerprint: TaskFingerprint | None) -> Preparation | None:
-    return recommend_preparation(fingerprint, task.public_task_id) if fingerprint else None
+    if fingerprint is None:
+        return None
+    return recommend_preparation(fingerprint, task.public_task_id, _input_type(task))
 
 
 def _stored_fingerprint(session: Session, task: Task) -> TaskFingerprint | None:
@@ -413,6 +452,8 @@ def _task_response(
         original_task=task.original_task,
         status=task.status,
         created_at=task.created_at,
+        input=_task_input(task),
+        task_only=task_service.task_body(task),
         fingerprint=fingerprint,
         analyzer=analyzer,
         recommendation=decision,

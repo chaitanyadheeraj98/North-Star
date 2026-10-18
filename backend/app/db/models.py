@@ -66,6 +66,38 @@ class Task(Base):
     executions: Mapped[list[Execution]] = relationship(
         back_populates="task", cascade="all, delete-orphan", order_by="Execution.id"
     )
+    #: What the text is and, for a file, where it lives. None for a plain task,
+    #: including every task created before input types existed.
+    source: Mapped[TaskSource | None] = relationship(
+        back_populates="task", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class TaskSource(Base):
+    """What kind of input a task is, and the repository file it came from.
+
+    A separate table rather than new columns on `tasks` so that `create_all`
+    adds it to an existing database without a migration.
+    """
+
+    __tablename__ = "task_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    input_type: Mapped[str] = mapped_column(String(16))
+    #: Repository-relative path the executing agent opens. The handoff points
+    #: here instead of carrying the text when it is set.
+    source_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: SHA-256 of the file's bytes as selected, so the agent can tell whether
+    #: the file changed after it was analyzed.
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_chars: Mapped[int] = mapped_column(Integer, default=0)
+    #: True when the analyzer saw a condensed digest, not the full text.
+    condensed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    task: Mapped[Task] = relationship(back_populates="source")
 
 
 class TaskFingerprintRow(Base):

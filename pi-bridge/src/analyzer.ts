@@ -122,6 +122,7 @@ export async function analyzeTask(
   analyzer: ResolvedAnalyzer,
   task: string,
   families: Array<{ key: string; definition: string }>,
+  inputType: InputType = 'task',
 ): Promise<AnalyzerResult> {
   const started = Date.now();
   const familyKeys = families.map((f) => f.key);
@@ -131,7 +132,7 @@ export async function analyzeTask(
   let repaired = false;
 
   try {
-    await session.prompt(buildUserPrompt(task));
+    await session.prompt(buildUserPrompt(task, inputType));
     let message = lastAssistant(session.messages);
     assertTurnSucceeded(message);
 
@@ -178,14 +179,34 @@ export async function analyzeTask(
   }
 }
 
-function buildUserPrompt(task: string): string {
+/** What the user says the text is. The system prompt explains how each is judged. */
+export const INPUT_TYPES = ['task', 'spec', 'plan'] as const;
+export type InputType = (typeof INPUT_TYPES)[number];
+
+export function isInputType(value: unknown): value is InputType {
+  return typeof value === 'string' && (INPUT_TYPES as readonly string[]).includes(value);
+}
+
+const INPUT_LABELS: Record<InputType, string> = {
+  task: 'TASK',
+  spec: 'SPEC',
+  plan: 'IMPLEMENTATION PLAN',
+};
+
+export function buildUserPrompt(task: string, inputType: InputType = 'task'): string {
+  const label = INPUT_LABELS[inputType];
+  const lead =
+    inputType === 'task'
+      ? 'Classify the following software-development task.'
+      : `The input below is ${inputType === 'spec' ? 'a SPEC' : 'an IMPLEMENTATION PLAN'}. ` +
+        'Classify the work of carrying it out, as described under "Input types".';
   return [
-    'Classify the following software-development task.',
+    lead,
     'Return only the TaskFingerprint JSON object.',
     '',
-    '--- TASK BEGINS ---',
+    `--- ${label} BEGINS ---`,
     task.trim(),
-    '--- TASK ENDS ---',
+    `--- ${label} ENDS ---`,
   ].join('\n');
 }
 
