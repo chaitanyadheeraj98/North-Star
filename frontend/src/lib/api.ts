@@ -13,6 +13,7 @@ import type {
   HandoffResponse,
   HistoryResponse,
   ImportResultResponse,
+  InputType,
   PiStatus,
   SettingsResponse,
   TaskResponse,
@@ -85,7 +86,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<{ status: string; version: string }>('/api/health'),
 
-  createTask: (task: string, options?: { analyzer?: string; allowFallback?: boolean }) =>
+  createTask: (
+    task: string,
+    options?: {
+      analyzer?: string;
+      allowFallback?: boolean;
+      inputType?: InputType;
+      /** Repository path of a spec or plan file; the handoff then points at it. */
+      sourcePath?: string;
+      sourceSha256?: string;
+    },
+  ) =>
     request<TaskResponse>('/api/tasks', {
       method: 'POST',
       body: JSON.stringify({
@@ -93,6 +104,11 @@ export const api = {
         analyze: true,
         analyzer: options?.analyzer ?? 'pi',
         allow_fallback: options?.allowFallback ?? false,
+        input_type: options?.inputType ?? 'task',
+        ...(options?.sourcePath ? { source_path: options.sourcePath } : {}),
+        ...(options?.sourcePath && options.sourceSha256
+          ? { source_sha256: options.sourceSha256 }
+          : {}),
       }),
     }),
 

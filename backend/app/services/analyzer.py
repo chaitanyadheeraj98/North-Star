@@ -14,7 +14,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from ..schemas.enums import Scope, TestIntensity
+from ..schemas.enums import InputType, Scope, TestIntensity
 from ..schemas.task_fingerprint import (
     AnalyzerMetadata,
     FingerprintEnvelope,
@@ -67,8 +67,12 @@ class TaskAnalyzer(ABC):
 
     @abstractmethod
     async def analyze(
-        self, task: str, overrides: AnalyzerOverrides | None = None
-    ) -> FingerprintEnvelope: ...
+        self,
+        task: str,
+        overrides: AnalyzerOverrides | None = None,
+        input_type: InputType = InputType.TASK,
+    ) -> FingerprintEnvelope:
+        """`input_type` says what the text is: a task, a spec or a plan."""
 
     @abstractmethod
     async def status(self) -> dict: ...
@@ -275,12 +279,17 @@ class HeuristicAnalyzer(TaskAnalyzer):
     name = "heuristic"
 
     async def analyze(
-        self, task: str, overrides: AnalyzerOverrides | None = None
+        self,
+        task: str,
+        overrides: AnalyzerOverrides | None = None,
+        input_type: InputType = InputType.TASK,
     ) -> FingerprintEnvelope:
         # The offline analyzer has no model to choose, so overrides are
         # accepted and ignored rather than rejected: the caller should not have
-        # to special-case which analyzer it is talking to.
-        del overrides
+        # to special-case which analyzer it is talking to. Keywords read the
+        # same in a task, a spec or a plan, so the input type is ignored too;
+        # the preparation advice still uses it.
+        del overrides, input_type
         if not task or not task.strip():
             raise AnalyzerError("The task is empty.")
         return FingerprintEnvelope(
