@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..config import ConfigBundle
 from ..core.learning.updater import rebuild_all
 from ..schemas.api import ImportResultRequest, ImportResultResponse
 from ..services.receipt_service import ReceiptImportError, import_receipt
-from .deps import ConfigDep, SessionDep
+from .deps import ConfigDep, SessionDep, require_header
+
+RECEIPT_HEADER = "X-NorthStar-Receipt"
 
 router = APIRouter(prefix="/api/results", tags=["results"])
 
@@ -22,8 +24,38 @@ def import_result(
     session: Session = SessionDep,
     config: ConfigBundle = ConfigDep,
 ) -> ImportResultResponse:
+    return _import(session, config, body.receipt)
+
+
+@router.post(
+    "/import-text",
+    response_model=ImportResultResponse,
+    dependencies=[require_header(RECEIPT_HEADER)],
+)
+async def import_result_text(
+    request: Request,
+    session: Session = SessionDep,
+    config: ConfigBundle = ConfigDep,
+) -> ImportResultResponse:
+    """The receipt as a raw text body.
+
+    This is what the router-outcome skill posts on its own once a task is
+    finished (`curl --data-binary @receipt.txt`), so nobody has to paste it.
+    It avoids JSON-escaping a multi-line block in a shell. It requires the
+    X-NorthStar-Receipt header because, unlike /import, a text/plain POST is
+    one a web page could otherwise send to localhost without a preflight.
+    """
+    raw = (await request.body()).decode("utf-8", errors="replace")
     try:
-        result = import_receipt(session, config, body.receipt)
+        body = ImportResultRequest(receipt=raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The receipt body is empty or too large.") from exc
+    return _import(session, config, body.receipt)
+
+
+def _import(session: Session, config: ConfigBundle, receipt: str) -> ImportResultResponse:
+    try:
+        result = import_receipt(session, config, receipt)
     except ReceiptImportError as exc:
         session.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc

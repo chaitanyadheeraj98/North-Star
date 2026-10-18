@@ -13,11 +13,11 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test \"tests/*.test.ts\""
   },
-  "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.73.1"
-  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1"
   }
 }

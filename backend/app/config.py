@@ -34,6 +34,10 @@ class Settings:
     pi_timeout_seconds: float
     cors_origins: tuple[str, ...]
     app_version: str
+    #: Host-shared directory (./data, mounted at /app/data). The Pi watchdog on
+    #: the host watches it for a restart request, which is how a container asks
+    #: for a host process to be restarted without any port or socket into the host.
+    data_dir: Path = _BACKEND_ROOT.parent / "data"
 
     @staticmethod
     def from_env() -> Settings:
@@ -61,7 +65,17 @@ class Settings:
             pi_timeout_seconds=float(os.getenv("PI_TIMEOUT_SECONDS", "180")),
             cors_origins=tuple(o.strip() for o in origins.split(",") if o.strip()),
             app_version=os.getenv("APP_VERSION", "1.0.0"),
+            data_dir=_data_dir(database_url),
         )
+
+
+def _data_dir(database_url: str) -> Path:
+    """DATA_DIR, else the directory holding the SQLite file, else ./data."""
+    if os.getenv("DATA_DIR"):
+        return Path(os.environ["DATA_DIR"]).resolve()
+    if database_url.startswith("sqlite:///"):
+        return Path(database_url.removeprefix("sqlite:///")).resolve().parent
+    return (_BACKEND_ROOT.parent / "data").resolve()
 
 
 @lru_cache(maxsize=1)

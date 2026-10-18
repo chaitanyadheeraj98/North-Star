@@ -73,7 +73,7 @@ else {
 
 $pi = Get-Command pi -ErrorAction SilentlyContinue
 if ($null -eq $pi) {
-    Write-Warn "The 'pi' CLI is not on PATH. Install it with: npm install -g @mariozechner/pi-coding-agent"
+    Write-Warn "The 'pi' CLI is not on PATH. Install it with: npm install -g @earendil-works/pi-coding-agent"
     Write-Warn "The bridge can still run, but Pi must be authenticated before it can classify anything."
 }
 else {
@@ -113,19 +113,12 @@ else {
 if (-not $SkipPiBridge -and $problems -notcontains 'node' -and $problems -notcontains 'node-version') {
     Write-Step "Installing Pi bridge dependencies"
     $bridge = Join-Path $root 'pi-bridge'
-    Push-Location $bridge
-    try {
-        npm install --no-audit --no-fund
-        if ($LASTEXITCODE -ne 0) {
-            Write-Bad "npm install failed in pi-bridge"
-            $problems += 'npm'
-        }
-        else {
-            Write-Ok "Pi bridge dependencies installed"
-        }
-    }
-    finally {
-        Pop-Location
+    . (Join-Path $PSScriptRoot 'bridge-deps.ps1')
+    switch (Sync-BridgeDeps $bridge { param($m) Write-Host "   $m" }) {
+        'failed' { Write-Bad "npm ci failed in pi-bridge"; $problems += 'npm' }
+        'busy' { Write-Warn "Pi bridge dependencies are out of date; the watchdog installs them on its next restart (Settings -> Reconnect)" }
+        'current' { Write-Ok "Pi bridge dependencies already match package-lock.json" }
+        default { Write-Ok "Pi bridge dependencies installed" }
     }
 }
 

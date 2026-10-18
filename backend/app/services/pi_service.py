@@ -17,6 +17,7 @@ TaskFingerprint schema before it goes anywhere near the router.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -25,6 +26,19 @@ import httpx
 from ..config import Settings, get_settings
 from ..schemas.task_fingerprint import FingerprintEnvelope
 from .analyzer import AnalyzerError, AnalyzerOverrides, TaskAnalyzer
+
+#: Dropped in the shared data directory; scripts/pi-watchdog.ps1 on the host
+#: deletes it and restarts the bridge. The backend runs in a container and has
+#: no other way to restart a host process.
+RESTART_REQUEST = "pi-restart.request"
+
+#: The watchdog checks for the request every 3s. Still on disk after this long
+#: means no watchdog is running, so there is no point waiting for a restart.
+PICKUP_SECONDS = 10.0
+
+#: One reconnect at a time per backend process (the app runs one worker).
+_reconnect_lock = asyncio.Lock()
+_last_reconnect: tuple[float, dict[str, Any]] | None = None
 
 
 class PiBridgeAnalyzer(TaskAnalyzer):
@@ -55,14 +69,27 @@ class PiBridgeAnalyzer(TaskAnalyzer):
             payload.update(overrides.as_payload())
 
         try:
-            async with httpx.AsyncClient(timeout=self._settings.pi_timeout_seconds) as client:
-                response = await client.post(f"{self._base_url}/analyze", json=payload)
-        except httpx.ConnectError as exc:
-            raise AnalyzerError(
-                "Cannot reach the Pi bridge. Start it with scripts/start-pi.ps1 "
-                f"(expected at {self._base_url}).",
-                detail=str(exc),
-            ) from exc
+            response = await self._post_analyze(payload)
+        except httpx.ConnectError:
+            # The bridge is down. Reconnect in place rather than making the user
+            # do it, then try exactly once more.
+            reconnected = await self.reconnect()
+            if not reconnected.get("available"):
+                raise AnalyzerError(
+                    "Cannot reach the Pi bridge, and reconnecting did not bring it back.",
+                    detail=str(reconnected.get("note") or ""),
+                ) from None
+            try:
+                response = await self._post_analyze(payload)
+            except httpx.ConnectError as exc:
+                raise AnalyzerError(
+                    f"Cannot reach the Pi bridge at {self._base_url}.", detail=str(exc)
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise AnalyzerError(
+                    f"The Pi bridge did not answer within {self._settings.pi_timeout_seconds:.0f}s.",
+                    detail=str(exc),
+                ) from exc
         except httpx.TimeoutException as exc:
             raise AnalyzerError(
                 f"The Pi bridge did not answer within {self._settings.pi_timeout_seconds:.0f}s.",
@@ -108,6 +135,92 @@ class PiBridgeAnalyzer(TaskAnalyzer):
             envelope.analyzer.duration_ms = int((time.perf_counter() - started) * 1000)
         return envelope
 
+    async def _post_analyze(self, payload: dict[str, Any]) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=self._settings.pi_timeout_seconds) as client:
+            return await client.post(f"{self._base_url}/analyze", json=payload)
+
+    async def reconnect(
+        self, wait_seconds: float = 60.0, pickup_seconds: float = PICKUP_SECONDS
+    ) -> dict[str, Any]:
+        """Restart the bridge through the host watchdog and wait for it. Never raises.
+
+        A fresh process re-reads .env, Pi's credentials (a /login done
+        elsewhere) and Pi's model list. When no watchdog picks the request up
+        within `pickup_seconds`, fall back to the bridge's in-place POST /reload.
+        `wait_seconds` bounds only the wait for a restart already under way.
+
+        Calls are serialised. A caller that queued behind another reconnect
+        gets that result instead of requesting a second restart, which would
+        kill the bridge the first one just started.
+        """
+        global _last_reconnect
+        asked = time.monotonic()
+        async with _reconnect_lock:
+            if _last_reconnect is not None and _last_reconnect[0] >= asked:
+                return _last_reconnect[1]
+            result = await self._restart(wait_seconds, pickup_seconds)
+            _last_reconnect = (time.monotonic(), result)
+            return result
+
+    async def _restart(self, wait_seconds: float, pickup_seconds: float) -> dict[str, Any]:
+        before = await self.status()
+        flag = self._settings.data_dir / RESTART_REQUEST
+        try:
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            flag.write_text(str(time.time()), encoding="utf-8")
+        except OSError as exc:
+            return await self._fallback(f"Cannot write {flag}: {exc}.")
+
+        started = time.monotonic()
+        while flag.exists():
+            if time.monotonic() - started >= pickup_seconds:
+                flag.unlink(missing_ok=True)
+                return await self._fallback(
+                    "The Pi watchdog did not pick up the restart request, so it is probably "
+                    "not running. Run scripts/install-pi-autostart.ps1 once; it starts with "
+                    "Windows after that."
+                )
+            await asyncio.sleep(1)
+
+        # Picked up: the watchdog is killing the old bridge and starting a new one.
+        while True:
+            current = await self.status()
+            # A new process that answers is a finished restart, even when it then
+            # reports a problem (not logged in, unknown model). Waiting longer
+            # would not change that, and the note says what is wrong.
+            if current["status"] != "unavailable" and current.get("started_at") != before.get(
+                "started_at"
+            ):
+                return {**current, "reconnect": "restarted"}
+            if time.monotonic() - started >= wait_seconds:
+                return {
+                    **current,
+                    "reconnect": "failed",
+                    "note": (
+                        f"The watchdog restarted the bridge, but it did not answer within "
+                        f"{wait_seconds:.0f}s. See pi-bridge/bridge.err.log."
+                    ),
+                }
+            await asyncio.sleep(2)
+
+    async def _fallback(self, reason: str) -> dict[str, Any]:
+        status = await self._reload()
+        if status["available"]:
+            return {**status, "reconnect": "reloaded"}
+        return {
+            **status,
+            "reconnect": "failed",
+            "note": " ".join(filter(None, [reason, status.get("note")])),
+        }
+
+    async def _reload(self) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                await client.post(f"{self._base_url}/reload")
+        except Exception:  # noqa: BLE001 - status() below reports what is wrong
+            pass
+        return await self.status()
+
     async def status(self) -> dict[str, Any]:
         """Never raises. The Settings page must render even when Pi is down."""
         try:
@@ -142,6 +255,7 @@ class PiBridgeAnalyzer(TaskAnalyzer):
             "model": body.get("actual_model") or body.get("model"),
             "thinking_level": body.get("configured_effort") or body.get("thinking_level"),
             "bridge_version": body.get("version"),
+            "started_at": body.get("started_at"),
             "authenticated_providers": body.get("authenticated_providers", []),
             "alternatives": body.get("alternatives", []),
             "error_code": body.get("error_code"),

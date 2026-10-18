@@ -7,6 +7,8 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/*.sqlite*
+# Written by the Reconnect button, consumed by scripts/pi-watchdog.ps1
+data/pi-restart.request
 
 # Python
 __pycache__/

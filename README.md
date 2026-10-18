@@ -74,7 +74,7 @@ You do the work
  ↓
 The router-outcome skill writes an execution receipt
  ↓
-You paste the receipt back
+The skill submits the receipt to the router itself
  ↓
 Statistics update; the next similar task routes better
 ```
@@ -194,7 +194,7 @@ application rewrites its own config files.
 | --- | --- | --- |
 | Docker Desktop | frontend + backend | any current version |
 | Node.js | Pi bridge | **22.6+** (it runs TypeScript directly) |
-| Pi | task classification | `npm install -g @mariozechner/pi-coding-agent` |
+| Pi | task classification | `npm install -g @earendil-works/pi-coding-agent` |
 | A subscription | Pi's model calls | Claude Pro/Max or ChatGPT Plus/Pro |
 
 You do **not** need an Anthropic or OpenAI API key. Pi uses the subscription you
@@ -312,18 +312,37 @@ recommended_provider=claude
 recommended_model=opus_5
 recommended_effort=low
 recommended_model_id=claude-opus-5
+preparation=plan
 router_version=1.0.0
 [/LLM-ROUTER]
+
+PREPARATION (do this before writing any code)
+
+1. Write an implementation plan to docs/plans/RT-000001-plan.md: ...
+2. Then implement the plan step by step. ...
 
 TASK
 
 <your task>
 
 ---
-When the work is finished, run the router-outcome skill (or ask: "generate the
-router result receipt") and paste the [LLM-ROUTER-RESULT] block back into the
-router's Result page.
+When the work is finished, run the router-outcome skill without waiting to be
+asked. It writes the [LLM-ROUTER-RESULT] receipt and submits it to the router
+itself.
 ```
+
+The `PREPARATION` section appears only when the Router page advises it. Each
+task gets one of three verdicts, computed from the fingerprint by fixed rules
+in `backend/app/services/preparation.py`:
+
+| Verdict | When | The handoff asks the model to |
+| --- | --- | --- |
+| Ready to execute | clear prompt, small task | just do it |
+| Plan first | clear prompt, complex or wide task | write `docs/plans/<id>-plan.md`, then implement it |
+| Spec and plan first | underspecified prompt, non-trivial task | write `docs/specs/<id>-spec.md`, then the plan, then implement |
+
+A vague but trivial task still runs directly: a spec for a one-line change
+costs more than getting it slightly wrong.
 
 5. Select that model and effort in Claude Code or the Codex CLI, paste, and do
    the work.
@@ -335,13 +354,9 @@ to the routing decision. Keep it in the conversation.
 
 ## 8. Importing your first receipt
 
-When the work is done, in the same conversation:
-
-```
-generate the router result receipt
-```
-
-The skill inspects what happened and emits:
+When the work is done, the agent runs the `router-outcome` skill on its own
+(the handoff tells it to; you can also ask "generate the router result
+receipt"). The skill inspects what happened and emits:
 
 ```
 [LLM-ROUTER-RESULT]
@@ -349,7 +364,20 @@ The skill inspects what happened and emits:
 [/LLM-ROUTER-RESULT]
 ```
 
-Copy the whole block, open the **Result** tab, paste, press **Import result**.
+and submits it itself:
+
+```
+curl -X POST http://localhost:3000/api/results/import-text \
+  -H "Content-Type: text/plain; charset=utf-8" -H "X-NorthStar-Receipt: 1" \
+  --data-binary @receipt.txt
+```
+
+The `X-NorthStar-Receipt` header is required. A web page could otherwise send
+a text/plain POST to localhost without a CORS preflight; with the header, the
+browser must ask first, and the loopback-only CORS policy refuses.
+
+If the agent reports that the router was unreachable, copy the block, open the
+**Result** tab, paste, and press **Import result**.
 
 You will see what was recorded and what it changed:
 
@@ -570,7 +598,7 @@ Two places set it, and the second wins:
 
 ```
 PI_PROVIDER=openai-codex
-PI_MODEL=gpt-5.5
+PI_MODEL=gpt-6-astra
 PI_THINKING_LEVEL=low
 ```
 
@@ -609,7 +637,7 @@ So a failure now looks like this, and lists what else is available without
 taking any of it:
 
 ```
-  analyzer : openai-codex / gpt-5.5 / low
+  analyzer : openai-codex / gpt-6-astra / low
   auth     : NOT READY (not_authenticated)
 
   Pi is not authenticated with "openai-codex".
@@ -654,6 +682,57 @@ Tables: `tasks`, `task_fingerprints`, `routing_decisions`, `executions`,
 Every fingerprint, decision and receipt is also stored as raw JSON alongside the
 extracted columns, so nothing an analyzer or agent reported is lost because this
 schema version had no field for it.
+
+### Updating an existing install
+
+Run from the repository root after pulling a new version:
+
+```powershell
+git pull
+Copy-Item .\data\router.db ".\data\router-$(Get-Date -f yyyyMMdd).db"   # optional backup
+
+# 1. Containers.
+docker compose up -d --build
+
+# 2. Watchdog and bridge. Stops the old watchdog, starts the new one, and has it
+#    restart the bridge: stop the bridge, run `npm ci` in pi-bridge if
+#    package-lock.json changed, start the bridge.
+.\scripts\install-pi-autostart.ps1
+
+# 3. The router-outcome skill copies in ~/.claude, ~/.codex and ~/.pi.
+.\scripts\install-skills.ps1
+```
+
+Confirm step 2 in `pi-bridge\watchdog.log`: after an update that changes the
+bridge's dependencies (such as the Pi SDK move to
+`@earendil-works/pi-coding-agent`) it shows `running npm ci`, then
+`pi-bridge dependencies installed`, then `starting bridge`. That restart can
+take a minute.
+
+Two things not to do instead:
+
+- **Do not run `npm ci` while the bridge is running.** On Windows the running
+  bridge holds native addons in `pi-bridge\node_modules` open, so `npm ci`
+  fails partway through deleting the folder. If you run the bridge by hand,
+  stop it first; `start-pi.ps1` then runs `npm ci` itself when needed.
+- **Do not restart the watchdog with `Stop-ScheduledTask` / `Start-ScheduledTask`.**
+  Stopping the task does not end the watchdog: the task reports Ready while
+  the old script keeps running. Re-run the installer.
+
+Then **check the analyzer model**, because neither of the two places it is
+configured is changed by an update:
+
+```powershell
+Select-String '^PI_(PROVIDER|MODEL)=' .env                                 # the bridge default
+(Invoke-RestMethod http://localhost:3000/api/settings).preferences |
+    Select-Object analyzer_provider, analyzer_model                         # the Settings pin, which wins
+```
+
+If either still names a model your subscription no longer serves (for example
+`gpt-5.5` on a ChatGPT account), change `PI_MODEL` in `.env` and pick a current
+model under **Settings -> Analyzer model**. `/health` cannot catch this: it
+reports `ok` for any model in Pi's catalog, and the provider only rejects it
+when an analysis runs. Run one task afterwards to be sure.
 
 ---
 
@@ -703,8 +782,15 @@ cd frontend;   npm test;          cd ..
 ## 14. Troubleshooting
 
 **"Pi bridge unavailable" in the UI.**
-The bridge is not running. Start it with `.\scripts\start-pi.ps1`. Check with
-`curl http://127.0.0.1:31415/health`.
+The bridge is not running. With the watchdog installed
+(`.\scripts\install-pi-autostart.ps1`, once) a crashed bridge is restarted
+within about 30 seconds, and **Settings -> Reconnect** does it immediately. An
+open app tab also restarts it, but only after two unreachable checks in a row
+(about a minute), so a bridge that is merely slow is not restarted
+mid-analysis. Nothing restarts a bridge that answers but is not logged in or
+names an unknown model, because a restart cannot fix that.
+Without the watchdog, start it with `.\scripts\start-pi.ps1`.
+Check with `curl http://127.0.0.1:31415/health`.
 
 **The bridge starts but says `auth: NOT READY`.**
 The configured provider cannot produce a token. `getAvailable()` only checks
@@ -816,8 +902,10 @@ Deliberately not built in V1:
   `backend_data_integrity` tasks share a statistics bucket. Embedding-based
   retrieval of the 30–50 most similar historical tasks is the V1.5 feature that
   would most improve precision.
-- **No automatic receipt ingestion.** You copy a handoff out and paste a receipt
-  back. Automating that needs CLI or IDE integration.
+- **Receipt submission depends on the agent.** The skill posts the receipt
+  itself, but an agent that is sandboxed without network access, or a
+  `FRONTEND_PORT` other than 3000, means pasting it on the Result page.
+  You still copy the handoff in by hand.
 - **No automatic execution.** The router recommends; you run it.
 - **Model updates require review for new models.** Discovery cannot establish
   capability priors. New entries remain disabled until reviewed.
@@ -835,9 +923,10 @@ Deliberately not built in V1:
 - **Single user, no auth.** Everything is bound to loopback.
 - **The offline analyzer is keyword-based.** It exists so the app still works
   when Pi is down, not as a replacement for semantic understanding.
-- **`@mariozechner/pi-coding-agent` is being renamed** to
-  `@earendil-works/pi-coding-agent`. The bridge pins the current package; the Pi
-  adapter is one file (`pi-bridge/src/pi.ts`) when that move needs making.
+- **The bridge pins `@earendil-works/pi-coding-agent`** (formerly
+  `@mariozechner/pi-coding-agent`). Keep it on the same version as the global
+  `pi` CLI, or the bridge will not know models the CLI lists. All SDK calls live
+  in `pi-bridge/src/pi.ts`.
 
 ---
 
