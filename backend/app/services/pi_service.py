@@ -24,6 +24,7 @@ from typing import Any
 import httpx
 
 from ..config import Settings, get_settings
+from ..schemas.enums import InputType
 from ..schemas.task_fingerprint import FingerprintEnvelope
 from .analyzer import AnalyzerError, AnalyzerOverrides, TaskAnalyzer
 
@@ -55,13 +56,20 @@ class PiBridgeAnalyzer(TaskAnalyzer):
         return self._base_url
 
     async def analyze(
-        self, task: str, overrides: AnalyzerOverrides | None = None
+        self,
+        task: str,
+        overrides: AnalyzerOverrides | None = None,
+        input_type: InputType = InputType.TASK,
     ) -> FingerprintEnvelope:
         if not task or not task.strip():
             raise AnalyzerError("The task is empty.")
 
         started = time.perf_counter()
-        payload: dict[str, Any] = {"task": task, "analysis_profile": "router-v1"}
+        payload: dict[str, Any] = {
+            "task": task,
+            "analysis_profile": "router-v1",
+            "input_type": InputType(input_type).value,
+        }
         # Whatever the user pinned in Settings. Anything omitted falls back to
         # the bridge's own boot configuration; the bridge never substitutes a
         # different model on its own.

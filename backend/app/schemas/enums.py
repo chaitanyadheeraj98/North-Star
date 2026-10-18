@@ -69,6 +69,14 @@ class TestIntensity(StrEnum):
     HIGH = "high"
 
 
+class InputType(StrEnum):
+    """What the user says the analyzed text is. Mirrors INPUT_TYPES in the bridge."""
+
+    TASK = "task"  # a request or prompt
+    SPEC = "spec"  # goals, requirements, edge cases, acceptance criteria
+    PLAN = "plan"  # ordered implementation steps
+
+
 class TaskStatus(StrEnum):
     """Lifecycle of a task inside the router."""
 

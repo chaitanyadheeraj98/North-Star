@@ -11,8 +11,8 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..db.models import RoutingDecisionRow, Task, TaskFingerprintRow
-from ..schemas.enums import TaskStatus
+from ..db.models import RoutingDecisionRow, Task, TaskFingerprintRow, TaskSource
+from ..schemas.enums import InputType, TaskStatus
 from ..schemas.routing_decision import RoutingDecision
 from .preparation import Preparation, handoff_steps
 
@@ -43,7 +43,13 @@ def derive_title(task_text: str, limit: int = 90) -> str:
     return "(untitled task)"
 
 
-def create_task(session: Session, task_text: str) -> Task:
+def create_task(
+    session: Session,
+    task_text: str,
+    input_type: InputType = InputType.TASK,
+    source_path: str | None = None,
+    source_sha256: str | None = None,
+) -> Task:
     if not task_text or not task_text.strip():
         raise ValueError("The task text is empty.")
 
@@ -53,6 +59,14 @@ def create_task(session: Session, task_text: str) -> Task:
         title=derive_title(task_text),
         status=TaskStatus.CREATED.value,
     )
+    # A plain task gets no source row, exactly like tasks from before input types.
+    if input_type != InputType.TASK:
+        task.source = TaskSource(
+            input_type=InputType(input_type).value,
+            source_path=source_path,
+            source_sha256=source_sha256,
+            content_chars=len(task_text),
+        )
     session.add(task)
     session.flush()
     task.public_task_id = f"{_TASK_ID_PREFIX}{task.id:0{_TASK_ID_DIGITS}d}"
@@ -107,14 +121,25 @@ def build_handoff(
         lines.append(f"recommended_model_id={model_id}")
     if preparation is not None:
         lines.append(f"preparation={preparation.mode}")
+    source = task.source
+    input_type = InputType(source.input_type) if source else InputType.TASK
+    if input_type != InputType.TASK:
+        lines.append(f"input_type={input_type.value}")
+    if source and source.source_path:
+        lines.append(f"source_path={source.source_path}")
+        if source.source_sha256:
+            lines.append(f"source_sha256={source.source_sha256}")
     lines.extend([f"router_version={router_version}", HANDOFF_CLOSE, ""])
     if preparation is not None:
-        lines.extend(handoff_steps(preparation))
+        spec_source = None
+        if input_type == InputType.SPEC:
+            spec_source = (source.source_path if source and source.source_path else "below")
+        lines.extend(handoff_steps(preparation, spec_source))
     lines.extend(
         [
-            "TASK",
+            _SECTION_TITLES[input_type],
             "",
-            task.original_task.rstrip(),
+            task_body(task),
             "",
             "---",
             "When the work is finished, run the router-outcome skill without waiting to be "
@@ -122,4 +147,53 @@ def build_handoff(
             "itself.",
         ]
     )
+    return "\n".join(lines)
+
+
+_SECTION_TITLES = {
+    InputType.TASK: "TASK",
+    InputType.SPEC: "SPEC",
+    InputType.PLAN: "IMPLEMENTATION PLAN",
+}
+
+
+def task_body(task: Task) -> str:
+    """What the agent is given: the text itself, or for a file, where to read it.
+
+    A spec or plan file can run to hundreds of thousands of characters, more
+    than an agent's prompt accepts, so the handoff points at the file in the
+    repository and the agent reads it with its own tools.
+    """
+    source = task.source
+    if not (source and source.source_path):
+        return task.original_task.rstrip()
+
+    kind = "implementation plan" if source.input_type == InputType.PLAN else "spec"
+    path = source.source_path
+    lines = [
+        f"The {kind} is in the file `{path}` in this repository "
+        f"({source.content_chars:,} characters). It is not repeated here.",
+        "",
+        "1. Open that file. If it does not exist at that path, stop and ask the user where "
+        "it is; do not reconstruct it from memory.",
+    ]
+    if source.source_sha256:
+        lines.append(
+            "2. Check it is the version that was analyzed: its SHA-256 should be "
+            f"{source.source_sha256}. If it differs, stop and tell the user the {kind} "
+            "changed after it was analyzed, so it should be re-analyzed in the router first."
+        )
+    n = len(lines) - 1
+    lines.append(f"{n}. Read the whole file before changing anything.")
+    if source.input_type == InputType.PLAN:
+        lines.append(
+            f"{n + 1}. Execute the plan: carry out its steps in order. It is the complete "
+            "description of the work; do not redesign it. If the code shows a step is wrong, "
+            "say so and update the plan file before diverging from it."
+        )
+    else:
+        lines.append(
+            f"{n + 1}. Implement what the spec describes. It is the complete description of "
+            "the work: treat its requirements, non-goals and acceptance criteria as binding."
+        )
     return "\n".join(lines)

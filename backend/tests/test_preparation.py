@@ -59,7 +59,7 @@ def fixed_fingerprint(monkeypatch):
     """Make the offline analyzer return a chosen fingerprint, to drive the real API."""
 
     def use(**overrides):
-        async def analyze(self, task, overrides_=None):  # noqa: ARG001
+        async def analyze(self, task, overrides_=None, input_type="task"):  # noqa: ARG001
             return FingerprintEnvelope(
                 fingerprint=fp(**overrides),
                 analyzer=AnalyzerMetadata(provider="heuristic", model="test", confidence=0.9),

@@ -6,6 +6,7 @@ import { burn, formatDate, outcomeTone, pct, titleCase } from '../lib/format.ts'
 import type { HistoryRow, TaskResponse } from '../lib/types.ts';
 
 const PAGE_SIZE = 25;
+const HISTORY_PREVIEW_CHARS = 20_000;
 
 export function HistoryPage() {
   const [rows, setRows] = useState<HistoryRow[]>([]);
@@ -167,9 +168,22 @@ export function HistoryPage() {
           {selected && !detailLoading && (
             <div className="mt-4 space-y-5">
               <div>
-                <SectionTitle>Task</SectionTitle>
+                <SectionTitle>
+                  {selected.input?.input_type === 'plan'
+                    ? 'Implementation plan'
+                    : selected.input?.input_type === 'spec'
+                      ? 'Spec'
+                      : 'Task'}
+                  {selected.input?.source_path ? ` (${selected.input.source_path})` : ''}
+                </SectionTitle>
                 <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
-                  {selected.original_task}
+                  {/* A plan can run to millions of characters; rendering all of
+                      them would freeze the page for a preview box. */}
+                  {selected.original_task.length > HISTORY_PREVIEW_CHARS
+                    ? `${selected.original_task.slice(0, HISTORY_PREVIEW_CHARS)}\n\n[... ${(
+                        selected.original_task.length - HISTORY_PREVIEW_CHARS
+                      ).toLocaleString()} more characters not shown]`
+                    : selected.original_task}
                 </pre>
               </div>
 

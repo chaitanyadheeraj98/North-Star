@@ -9,17 +9,37 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+import re
 
-from .routing_decision import RoutingRecommendations
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
 from ..services.preparation import Preparation
+from .enums import InputType
+from .routing_decision import RoutingRecommendations
 from .task_fingerprint import TaskFingerprint
+
+
+#: A pasted task or prompt. Longer input is a spec or plan, which is condensed
+#: for analysis instead (services/input_digest.py).
+TASK_MAX_CHARS = 200_000
+#: A spec or plan file. Generous: it is stored, condensed, and never sent whole.
+DOCUMENT_MAX_CHARS = 5_000_000
+
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class CreateTaskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    task: str = Field(min_length=1, max_length=200_000)
+    task: str = Field(min_length=1, max_length=DOCUMENT_MAX_CHARS)
+    #: What the text is. Tells the analyzer how to judge it and decides which
+    #: preparation advice makes sense (a plan is never told to write a plan).
+    input_type: InputType = InputType.TASK
+    #: For a spec or plan file: where it lives in the repository. The handoff
+    #: then tells the agent to read that file instead of carrying the text.
+    source_path: str | None = Field(default=None, max_length=500)
+    #: SHA-256 of the file's bytes, computed by the browser when it was picked.
+    source_sha256: str | None = None
 
     analyze: bool = Field(
         default=True,
@@ -42,6 +62,60 @@ class CreateTaskRequest(BaseModel):
         if not value.strip():
             raise ValueError("The task is empty.")
         return value
+
+    @field_validator("source_path")
+    @classmethod
+    def _safe_path(cls, value: str | None) -> str | None:
+        """A path, and nothing that could break out of the handoff it is written into.
+
+        It lands on its own `source_path=` line in the [LLM-ROUTER] block and in
+        backticks in the instructions, so a newline or backtick could forge
+        metadata or instructions.
+        """
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if "`" in value or any(ord(ch) < 32 for ch in value):
+            raise ValueError("The file path cannot contain backticks, tabs or line breaks.")
+        return value
+
+    @field_validator("source_sha256")
+    @classmethod
+    def _hex_digest(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not _SHA256.match(value):
+            raise ValueError("source_sha256 must be 64 hexadecimal characters.")
+        return value
+
+    @model_validator(mode="after")
+    def _fits_input_type(self) -> CreateTaskRequest:
+        if self.input_type == InputType.TASK:
+            if len(self.task) > TASK_MAX_CHARS:
+                raise ValueError(
+                    f"A task can be at most {TASK_MAX_CHARS:,} characters (this one is "
+                    f"{len(self.task):,}). For a long spec or implementation plan, choose "
+                    "that input type: it has no practical limit and is condensed for analysis."
+                )
+            if self.source_path or self.source_sha256:
+                raise ValueError("A file path only applies to a spec or implementation plan.")
+        if self.source_sha256 and not self.source_path:
+            raise ValueError("source_sha256 needs the source_path it describes.")
+        return self
+
+
+class TaskInput(BaseModel):
+    """What the analyzed text was, as shown on the Router page."""
+
+    input_type: InputType = InputType.TASK
+    source_path: str | None = None
+    source_sha256: str | None = None
+    content_chars: int = 0
+    #: True when the analyzer classified a condensed digest of the text.
+    condensed: bool = False
 
 
 class AnalyzeRequest(BaseModel):
@@ -76,6 +150,10 @@ class TaskResponse(BaseModel):
     original_task: str
     status: str
     created_at: datetime
+    input: TaskInput = Field(default_factory=TaskInput)
+    #: What "Copy task only" copies: the text, or for a spec or plan file the
+    #: instructions pointing at it (the file may be too long to paste).
+    task_only: str = ""
 
     fingerprint: TaskFingerprint | None = None
     analyzer: AnalyzerInfo | None = None

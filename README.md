@@ -350,6 +350,62 @@ costs more than getting it slightly wrong.
 The `task_id` in the metadata block is the only thing connecting the work back
 to the routing decision. Keep it in the conversation.
 
+### Specs and implementation plans
+
+Above the text box, choose what you are analyzing:
+
+| Type | What it is | Advice it can get |
+| --- | --- | --- |
+| **Task / prompt** | A request in your own words | Execute, plan first, or spec and plan first |
+| **Spec** | Goals, requirements, edge cases, acceptance criteria | Execute, or plan first if it is complex. Never "write a spec" |
+| **Implementation plan** | Ordered steps, files to change, tests | Always execute. A plan is never told to write a plan |
+
+The analyzer is told which it is, and judges a plan by how hard it is to
+**execute as written**, not to design. So a long plan of many small steps does
+not get a stronger model just for being long.
+
+**Choose a spec or plan as a file** rather than pasting it when it is long:
+
+1. Pick **Spec** or **Implementation plan**, then **Choose file...**.
+2. Check **Path in your repository**. The browser only tells the app the file's
+   name, never its folder, so the box is pre-filled with a guess
+   (`docs/plans/<name>` or `docs/specs/<name>`). It must be the path the
+   model will open, relative to the repository it works in.
+3. Press **Analyze plan**.
+
+The handoff then **points at the file** instead of carrying it:
+
+```
+[LLM-ROUTER]
+task_id=RT-000002
+recommended_provider=codex
+...
+input_type=plan
+source_path=docs/plans/billing-plan.md
+source_sha256=0e4a0279...
+[/LLM-ROUTER]
+
+IMPLEMENTATION PLAN
+
+The implementation plan is in the file `docs/plans/billing-plan.md` in this
+repository (176,955 characters). It is not repeated here.
+
+1. Open that file. If it does not exist at that path, stop and ask ...
+2. Check it is the version that was analyzed: its SHA-256 should be ...
+3. Read the whole file before changing anything.
+4. Execute the plan: carry out its steps in order. ...
+```
+
+The handoff stays about 1,300 characters however long the plan is, and the
+model reads the whole file with its own tools. If you edit the plan after
+analyzing it, the SHA-256 check makes the model stop and ask you to
+re-analyze.
+
+**Size limits.** A task can be up to 200,000 characters. A spec or plan can be
+up to 5,000,000. Anything over 30,000 is **condensed** before Pi sees it: the
+real size, every heading, the file paths it names, and the opening of each
+section. The Router page says when that happened.
+
 ---
 
 ## 8. Importing your first receipt
@@ -902,6 +958,9 @@ Deliberately not built in V1:
   `backend_data_integrity` tasks share a statistics bucket. Embedding-based
   retrieval of the 30–50 most similar historical tasks is the V1.5 feature that
   would most improve precision.
+- **A spec or plan file's folder is typed, not detected.** Browsers never give a
+  page the folder of a picked file, so the repository path is pre-filled with a
+  guess you confirm.
 - **Receipt submission depends on the agent.** The skill posts the receipt
   itself, but an agent that is sandboxed without network access, or a
   `FRONTEND_PORT` other than 3000, means pasting it on the Result page.

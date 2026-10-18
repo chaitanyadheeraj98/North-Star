@@ -135,12 +135,27 @@ export type TaskResponse = {
   original_task: string;
   status: string;
   created_at: string;
+  input?: TaskInput;
+  /** What "Copy task only" copies. For a spec or plan file, the pointer to it. */
+  task_only?: string;
   fingerprint: TaskFingerprint | null;
   analyzer: AnalyzerInfo | null;
   recommendation: RoutingRecommendations | null;
   preparation?: Preparation | null;
   handoffs: Record<string, string>;
   execution?: Record<string, unknown> | null;
+};
+
+/** What the analyzed text is. Mirrors InputType on the backend. */
+export type InputType = 'task' | 'spec' | 'plan';
+
+export type TaskInput = {
+  input_type: InputType;
+  source_path: string | null;
+  source_sha256: string | null;
+  content_chars: number;
+  /** True when the analyzer classified a condensed digest, not the full text. */
+  condensed: boolean;
 };
 
 /** Whether to plan, or spec and plan, before executing. Decided on the backend. */

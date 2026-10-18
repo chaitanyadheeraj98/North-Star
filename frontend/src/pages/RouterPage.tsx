@@ -3,7 +3,16 @@ import { useEffect, useRef, useState } from 'react';
 import { Banner, Button, Card, Pill, SectionTitle, Stat } from '../components/ui.tsx';
 import { ApiError, api, copyToClipboard } from '../lib/api.ts';
 import { band, bandTone, burn, effortLabel, pct, titleCase } from '../lib/format.ts';
-import type { PiStatus, TaskResponse } from '../lib/types.ts';
+import {
+  FILE_ACCEPT,
+  INPUT_TYPE_OPTIONS,
+  inputProblem,
+  pathProblem,
+  readPickedFile,
+  suggestedPath,
+  type PickedFile,
+} from '../lib/input.ts';
+import type { InputType, PiStatus, TaskResponse } from '../lib/types.ts';
 
 /**
  * Staged progress messages.
@@ -28,6 +37,12 @@ export function RouterPage({
   preferences: { analyzer_source: string; allow_analyzer_fallback: boolean } | null;
 }) {
   const [task, setTask] = useState('');
+  const [inputType, setInputType] = useState<InputType>('task');
+  // A spec or plan picked from disk. While set, it replaces the text box.
+  const [picked, setPicked] = useState<PickedFile | null>(null);
+  const [sourcePath, setSourcePath] = useState('');
+  const [fileError, setFileError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState(0);
   const [result, setResult] = useState<TaskResponse | null>(null);
@@ -42,8 +57,35 @@ export function RouterPage({
   const allowFallback = preferences?.allow_analyzer_fallback ?? false;
   const piDown = analyzerSource === 'pi' && pi !== null && !pi.available;
 
+  const text = picked ? picked.text : task;
+  const problem = inputProblem(inputType, text) ?? (picked ? pathProblem(sourcePath) : null);
+
+  function chooseType(next: InputType) {
+    setInputType(next);
+    setFileError(null);
+    // A task is always typed or pasted; a file only makes sense for a spec or plan.
+    if (next === 'task') setPicked(null);
+    else if (picked) setSourcePath(suggestedPath(next, picked.name));
+  }
+
+  async function pickFile(file: File | undefined) {
+    if (!file) return;
+    setFileError(null);
+    try {
+      const read = await readPickedFile(file);
+      setPicked(read);
+      setSourcePath(suggestedPath(inputType, read.name));
+    } catch {
+      setPicked(null);
+      setFileError(`${file.name} is not a UTF-8 text file. Pick a Markdown or text file.`);
+    } finally {
+      // Lets the same file be picked again after it changed on disk.
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  }
+
   async function analyze() {
-    if (!task.trim() || busy) return;
+    if (!text.trim() || busy || problem) return;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -56,9 +98,12 @@ export function RouterPage({
     );
 
     try {
-      const response = await api.createTask(task, {
+      const response = await api.createTask(text, {
         analyzer: analyzerSource,
         allowFallback,
+        inputType,
+        sourcePath: picked ? sourcePath.trim() : undefined,
+        sourceSha256: picked?.sha256,
       });
       setResult(response);
     } catch (err) {
@@ -73,8 +118,11 @@ export function RouterPage({
 
   async function copy(kind: 'handoff' | 'task', provider: string) {
     if (!result) return;
-    const text = kind === 'handoff' ? (result.handoffs[provider] ?? '') : result.original_task;
-    const ok = await copyToClipboard(text);
+    const value =
+      kind === 'handoff'
+        ? (result.handoffs[provider] ?? '')
+        : (result.task_only ?? result.original_task);
+    const ok = await copyToClipboard(value);
     setCopied(ok ? `${provider}-${kind}` : 'failed');
     window.setTimeout(() => setCopied(null), 2200);
   }
@@ -93,27 +141,114 @@ export function RouterPage({
       )}
 
       <Card>
-        <label
-          htmlFor="task-input"
-          className="mb-3 block text-lg font-medium text-slate-100"
-        >
-          What do you want the AI to do?
-        </label>
-        <textarea
-          id="task-input"
-          value={task}
-          onChange={(event) => setTask(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void analyze();
-          }}
-          rows={9}
-          spellCheck={false}
-          placeholder="Paste the coding task exactly as you would give it to Claude or Codex."
-          className="w-full resize-y rounded-lg border border-slate-800 bg-slate-950/70 p-4 font-mono text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-sky-700"
-        />
+        <div className="mb-4 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="What are you analyzing?">
+          {INPUT_TYPE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={inputType === option.value}
+              title={option.hint}
+              onClick={() => chooseType(option.value)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                inputType === option.value
+                  ? 'border-sky-700 bg-sky-950/60 text-sky-200'
+                  : 'border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+          {inputType !== 'task' && (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                accept={FILE_ACCEPT}
+                className="hidden"
+                aria-label={`Choose a ${inputType === 'spec' ? 'spec' : 'plan'} file`}
+                onChange={(event) => void pickFile(event.target.files?.[0])}
+              />
+              <Button variant="secondary" onClick={() => fileInput.current?.click()}>
+                {picked ? 'Choose another file' : 'Choose file...'}
+              </Button>
+            </>
+          )}
+        </div>
+
+        {picked ? (
+          <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-mono text-sm text-slate-200">{picked.name}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {picked.text.length.toLocaleString()} characters. Long documents are condensed
+                  for analysis; the handoff points the model at the file, so it reads all of it.
+                </p>
+              </div>
+              <Button variant="ghost" onClick={() => setPicked(null)}>
+                Remove
+              </Button>
+            </div>
+            <label htmlFor="source-path" className="mt-4 block text-xs font-medium text-slate-300">
+              Path in your repository
+            </label>
+            <input
+              id="source-path"
+              value={sourcePath}
+              onChange={(event) => setSourcePath(event.target.value)}
+              spellCheck={false}
+              className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-200 outline-none focus:border-sky-700"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              The browser only tells the app the file name, not its folder. Check this is where
+              the file is, relative to the repository the model works in: it is the path the
+              model will open.
+            </p>
+          </div>
+        ) : (
+          <>
+            <label htmlFor="task-input" className="mb-3 block text-lg font-medium text-slate-100">
+              {inputType === 'task'
+                ? 'What do you want the AI to do?'
+                : inputType === 'spec'
+                  ? 'Paste the spec, or choose its file above'
+                  : 'Paste the implementation plan, or choose its file above'}
+            </label>
+            <textarea
+              id="task-input"
+              value={task}
+              onChange={(event) => setTask(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void analyze();
+              }}
+              rows={9}
+              spellCheck={false}
+              placeholder={
+                inputType === 'task'
+                  ? 'Paste the coding task exactly as you would give it to Claude or Codex.'
+                  : 'A long document is better chosen as a file: the handoff then stays short.'
+              }
+              className="w-full resize-y rounded-lg border border-slate-800 bg-slate-950/70 p-4 font-mono text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-sky-700"
+            />
+          </>
+        )}
+
+        {(fileError ?? (text.trim() ? problem : null)) && (
+          <p className="mt-3 text-sm text-amber-300" role="alert">
+            {fileError ?? problem}
+          </p>
+        )}
+
         <div className="mt-4 flex items-center gap-4">
-          <Button onClick={() => void analyze()} disabled={busy || !task.trim()}>
-            {busy ? 'Analyzing...' : 'Analyze task'}
+          <Button onClick={() => void analyze()} disabled={busy || !text.trim() || Boolean(problem)}>
+            {busy
+              ? 'Analyzing...'
+              : inputType === 'task'
+                ? 'Analyze task'
+                : inputType === 'spec'
+                  ? 'Analyze spec'
+                  : 'Analyze plan'}
           </Button>
           <span className="text-xs text-slate-500">
             {busy ? STAGES[stage] : 'Ctrl+Enter to analyze'}
@@ -135,6 +270,17 @@ export function RouterPage({
           {result.analyzer.note ??
             'The Pi bridge was unreachable, so a keyword analyzer classified this task.'}
         </Banner>
+      )}
+
+      {result?.input?.condensed && (
+        <p className="text-sm text-slate-400">
+          Pi classified a condensed version of this {result.input.content_chars.toLocaleString()}
+          -character {result.input.input_type === 'spec' ? 'spec' : 'plan'}: its outline, the files
+          it names, and the opening of each section.
+          {result.input.source_path
+            ? ` The handoff points the model at ${result.input.source_path}, so it reads the whole file.`
+            : ' The handoff carries the full text.'}
+        </p>
       )}
 
       {result?.preparation && (
@@ -224,7 +370,11 @@ export function RouterPage({
                 {copied === `${provider}-handoff` ? 'Copied' : `Copy ${decision.provider_display} handoff`}
               </Button>
               <Button variant="secondary" onClick={() => void copy('task', provider)}>
-                {copied === `${provider}-task` ? 'Copied' : 'Copy task only'}
+                {copied === `${provider}-task`
+                  ? 'Copied'
+                  : result.input?.source_path
+                    ? 'Copy instructions only'
+                    : 'Copy task only'}
               </Button>
               <span className="text-xs text-slate-500">
                 Fallback: {decision.fallback_display ?? 'No other configuration available'}
