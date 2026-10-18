@@ -43,6 +43,12 @@ export function RouterPage({
   const [sourcePath, setSourcePath] = useState('');
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  // Name of the file being read, while a read is in flight.
+  const [reading, setReading] = useState<string | null>(null);
+  // Bumped by every new pick, type change and Remove. A read that finishes
+  // after any of those belongs to a choice the user has abandoned: it must not
+  // bring a file back into a Task, or replace a file picked after it.
+  const readToken = useRef(0);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState(0);
   const [result, setResult] = useState<TaskResponse | null>(null);
@@ -60,7 +66,19 @@ export function RouterPage({
   const text = picked ? picked.text : task;
   const problem = inputProblem(inputType, text) ?? (picked ? pathProblem(sourcePath) : null);
 
+  function cancelRead() {
+    readToken.current += 1;
+    setReading(null);
+  }
+
+  function removeFile() {
+    cancelRead();
+    setPicked(null);
+  }
+
   function chooseType(next: InputType) {
+    if (next === inputType) return;
+    cancelRead();
     setInputType(next);
     setFileError(null);
     // A task is always typed or pasted; a file only makes sense for a spec or plan.
@@ -73,22 +91,28 @@ export function RouterPage({
 
   async function pickFile(file: File | undefined) {
     if (!file) return;
+    const token = ++readToken.current;
+    const forType = inputType;
     setFileError(null);
+    setReading(file.name);
+    // Lets the same file be picked again after it changed on disk.
+    if (fileInput.current) fileInput.current.value = '';
     try {
       const read = await readPickedFile(file);
+      if (token !== readToken.current) return; // abandoned meanwhile
       setPicked(read);
-      setSourcePath(suggestedPath(inputType, read.name));
+      setSourcePath(suggestedPath(forType, read.name));
     } catch {
+      if (token !== readToken.current) return;
       setPicked(null);
       setFileError(`${file.name} is not a UTF-8 text file. Pick a Markdown or text file.`);
     } finally {
-      // Lets the same file be picked again after it changed on disk.
-      if (fileInput.current) fileInput.current.value = '';
+      if (token === readToken.current) setReading(null);
     }
   }
 
   async function analyze() {
-    if (!text.trim() || busy || problem) return;
+    if (!text.trim() || busy || problem || reading) return;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -189,7 +213,7 @@ export function RouterPage({
                   for analysis; the handoff points the model at the file, so it reads all of it.
                 </p>
               </div>
-              <Button variant="ghost" onClick={() => setPicked(null)}>
+              <Button variant="ghost" onClick={removeFile}>
                 Remove
               </Button>
             </div>
@@ -244,14 +268,19 @@ export function RouterPage({
         )}
 
         <div className="mt-4 flex items-center gap-4">
-          <Button onClick={() => void analyze()} disabled={busy || !text.trim() || Boolean(problem)}>
-            {busy
-              ? 'Analyzing...'
-              : inputType === 'task'
-                ? 'Analyze task'
-                : inputType === 'spec'
-                  ? 'Analyze spec'
-                  : 'Analyze plan'}
+          <Button
+            onClick={() => void analyze()}
+            disabled={busy || Boolean(reading) || !text.trim() || Boolean(problem)}
+          >
+            {reading
+              ? `Reading ${reading}...`
+              : busy
+                ? 'Analyzing...'
+                : inputType === 'task'
+                  ? 'Analyze task'
+                  : inputType === 'spec'
+                    ? 'Analyze spec'
+                    : 'Analyze plan'}
           </Button>
           <span className="text-xs text-slate-500">
             {busy ? STAGES[stage] : 'Ctrl+Enter to analyze'}

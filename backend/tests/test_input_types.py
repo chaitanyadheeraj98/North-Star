@@ -386,5 +386,49 @@ def test_a_risk_deep_inside_a_long_section_is_what_gets_excerpted():
     text = condense_for_analysis(cosmetic_plan_with({200: deep}), InputType.PLAN).text
     assert len(text) <= ANALYSIS_LIMIT
     excerpts = text[text.index("## Section excerpts"):]
-    assert "## Step 200: Risky step\n[...]\n" in excerpts
-    assert "DEEP-RISK: then backfill the ledger with a data migration." in excerpts
+    # The risky instruction is shown, inside the excerpt labelled with its own
+    # heading (not floating under some other section's).
+    own = excerpts[excerpts.index("## Step 200: Risky step"):]
+    own = own[: own.index("\n\n", own.index("DEEP-RISK"))] if "DEEP-RISK" in own else own
+    assert "DEEP-RISK: then backfill the ledger with a data migration." in own
+    assert "## Step 201:" not in own
+
+
+# --- Review round 2: risks anywhere inside one long section -----------------
+
+
+def test_a_risk_in_the_middle_of_a_plan_without_headings_is_excerpted():
+    """Regression: a heading-less plan kept only its start and end."""
+    filler = "Rename a label and adjust spacing on the settings page. " * 1500
+    plan = filler + " MIDDLE-RISK: write a data migration that rebuilds the payments table in batches. " + filler + " FINAL-CHECK"
+    text = condense_for_analysis(plan, InputType.PLAN).text
+    assert len(text) <= ANALYSIS_LIMIT
+    excerpts = text[text.index("## Section excerpts"):]
+    assert "MIDDLE-RISK: write a data migration that rebuilds the payments table in batches." in excerpts
+    assert excerpts.count("Rename a label") > 0, "the opening is still shown"
+    assert "FINAL-CHECK" in excerpts, "the end of a single-section document is still shown"
+    assert "characters omitted" in excerpts
+
+
+def test_every_risk_category_in_one_section_gets_its_own_window():
+    """Regression: only the first risk in a section was excerpted."""
+    body = (
+        ("Polish copy. " * 3000) + "RISK-A: data migration of the ledger. "
+        + ("Polish copy. " * 3000) + "RISK-B: rotate the encryption keys. "
+        + ("Polish copy. " * 3000) + "RISK-C: make retries idempotent. "
+    )
+    plan = "\n".join(["# Plan"] + [f"## Step {i}\n" + (body if i == 3 else "Tweak a label. " * 50) for i in range(1, 6)])
+    text = condense_for_analysis(plan, InputType.PLAN).text
+    assert len(text) <= ANALYSIS_LIMIT
+    for marker in ("RISK-A: data migration", "RISK-B: rotate the encryption keys", "RISK-C: make retries idempotent"):
+        assert marker in text
+
+
+def test_squeezed_risky_excerpts_keep_their_heading():
+    """With little room per section, an excerpt is still labelled."""
+    risky = {i: ("Polish copy. " * 100) + f"RISK-{i}: data migration of t{i}." for i in range(1, 1201)}
+    text = condense_for_analysis(cosmetic_plan_with(risky, sections=1200), InputType.PLAN).text
+    excerpts = text[text.index("## Section excerpts"):]
+    for found in re.finditer(r"RISK-(\d+):", excerpts):
+        before = excerpts[: found.start()]
+        assert before.rfind(f"## Step {found.group(1)}: Risky step") > before.rfind("sections omitted")

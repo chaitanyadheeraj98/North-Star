@@ -229,11 +229,9 @@ def _excerpts(sections: list[_Section], budget: int) -> str:
     if not sections or budget <= 0:
         return ""
     if len(sections) == 1:
-        body = sections[0].body
-        if len(body) <= budget:
-            return body
-        head, tail = budget * 70 // 100, budget * 25 // 100
-        return f"{body[:head]}\n[... {len(body) - head - tail:,} characters omitted ...]\n{body[-tail:]}"
+        # The whole document is one section: keep its end too, since plans
+        # tend to put verification last.
+        return _excerpt(sections[0], budget, keep_end=True)
 
     # Each excerpt also costs a "[...]" marker, a gap marker and blank lines.
     overhead = 60
@@ -255,23 +253,83 @@ def _excerpts(sections: list[_Section], budget: int) -> str:
     return "\n\n".join(out)
 
 
-def _excerpt(section: _Section, share: int) -> str:
-    """The section if it fits; otherwise its opening, or for a risky section the
-    text around its first risk signal, which may be far past the opening."""
+#: Shortest useful window around a risk signal: enough for the instruction.
+_MIN_WINDOW = 150
+#: What each omitted stretch costs in the output.
+_GAP_OVERHEAD = 40
+
+
+def _excerpt(section: _Section, share: int, keep_end: bool = False) -> str:
+    """The section if it fits; otherwise its opening plus a window around the
+    first mention of EVERY risk category in it, wherever that is.
+
+    Showing only the opening, or only the first risk, loses instructions that
+    the risk summary still counts: a migration halfway through a heading-less
+    plan, or a key rotation after a migration in the same step. `keep_end`
+    also keeps the end (for a document that is a single section).
+    """
     body = section.body
     if len(body) <= share:
         return body
-    first = min(
-        (m.start() for p in RISK_SIGNALS.values() if (m := p.search(body))), default=None
+
+    anchors = sorted(
+        {m.start() for p in RISK_SIGNALS.values() if (m := p.search(body))}
     )
-    if first is None or first < share * 2 // 3:
+    # Window order is priority order: risks first, then context.
+    starts: list[tuple[str, int]] = [("risk", a) for a in anchors]
+    starts.append(("open", 0))
+    if keep_end:
+        starts.append(("end", len(body)))
+    # Too many windows for the room: drop context, then the last risks.
+    while len(starts) > 1 and share // len(starts) - _GAP_OVERHEAD < _MIN_WINDOW:
+        drop = next((i for i, (kind, _) in enumerate(starts) if kind == "end"), None)
+        if drop is None:
+            drop = next((i for i, (kind, _) in enumerate(starts) if kind == "open"), None)
+        starts.pop(drop if drop is not None else len(starts) - 1)
+
+    if not anchors:
+        # No risk: as before, mostly opening, some end.
+        if keep_end:
+            head, tail = share * 70 // 100, share * 25 // 100
+            return f"{body[:head]}\n[... {len(body) - head - tail:,} characters omitted ...]\n{body[-tail:]}"
         cut = body.rfind("\n", 0, share)
         return body[: cut if cut > share // 2 else share] + "\n[...]"
-    # Heading for context, then a window that starts a little before the signal.
-    head = (section.heading or body[:80])[:120]
-    room = max(80, share - len(head) - 20)
-    start = max(0, first - room // 4)
-    return f"{head}\n[...]\n{body[start:start + room]}\n[...]"
+
+    # The heading labels the excerpt even when the opening window was dropped.
+    label = section.heading[:120] if section.heading else ""
+    room = share - (len(label) + _GAP_OVERHEAD if label else 0)
+    width = max(_MIN_WINDOW // 2, room // len(starts) - _GAP_OVERHEAD)
+    windows = []
+    for kind, at in starts:
+        if kind == "open":
+            windows.append((0, width))
+        elif kind == "end":
+            windows.append((len(body) - width, len(body)))
+        else:  # a little context before the signal, the instruction after it
+            begin = max(0, at - width // 4)
+            windows.append((begin, min(len(body), begin + width)))
+    merged: list[list[int]] = []
+    for begin, end in sorted(windows):
+        if merged and begin <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([begin, end])
+
+    out = []
+    cursor = 0
+    if label and merged[0][0] > 0:
+        out.append(label)
+        # The heading line is shown, not omitted. It is stored stripped, so
+        # measure it in the body, where markdown allows up to 3 leading spaces.
+        cursor = body.index(section.heading) + len(section.heading)
+    for begin, end in merged:
+        if begin > cursor:
+            out.append(f"[... {begin - cursor:,} characters omitted ...]")
+        out.append(body[begin:end])
+        cursor = end
+    if cursor < len(body):
+        out.append(f"[... {len(body) - cursor:,} characters omitted ...]")
+    return "\n".join(out)
 
 
 def _choose(sections: list[_Section], count: int) -> set[int]:
